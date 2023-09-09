@@ -1,1 +1,1 @@
-# motion-binary-latent-diffusion
+# Motion Binary Latent Diffusion
