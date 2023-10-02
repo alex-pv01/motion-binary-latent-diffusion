@@ -1,3 +1,25 @@
+# Other tools
+check.py
+
+# Other dependencies
+t2m
+glove
+kit
+body_models
+
+#WandB
+wandb
+
+# Docker runner
+docker_run.sh
+
+# Data
+dataset/HumanML3D
+dataset/KIT-ML
+
+# Saves
+save/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -77,6 +99,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+.virtual_documents
 
 # IPython
 profile_default/
