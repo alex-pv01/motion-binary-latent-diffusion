@@ -1,0 +1,40 @@
+model:
+  base_learning_rate: 4.5e-6
+  target: model.encoding.mbvae.MBVAEModel
+  params:
+    emb_dim: 13
+    codebook_size: 128
+    quantize: binary
+    key: "motion"
+    ddconfig:
+      double_z: False
+      z_channels: 16
+      resolution: 52
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult: [1,2,4] # num_down = len(ch_mult) - 1
+      num_res_blocks: 2
+      attn_resolutions: [13,26]
+      dropout: 0.0
+
+    lossconfig:
+      target: model.encoding.modules.losses.MSELoss
+  cond_stage_config: __is_unconditional__
+
+data: 
+  target: data_loaders.get_data.DataModuleFromConfig
+  params:
+    batch_size: 4
+    motions_path: /home/apujol/mbld/datasets/MotionX/MotionX/datasets/motion_data/new_joints
+    texts_path: /home/apujol/mbld/datasets/MotionX/MotionX/datasets/texts/semantic_labels
+    name: motionx
+    train: /home/apujol/mbld/datasets/MotionX/MotionX/datasets/train.txt
+    val: /home/apujol/mbld/datasets/MotionX/MotionX/datasets/val.txt
+    test: /home/apujol/mbld/datasets/MotionX/MotionX/datasets/test.txt
+    num_workers: 8
+    debug: 100
+
+trainer:
+  num_epochs: 100
+  log_every_n_steps: 1000

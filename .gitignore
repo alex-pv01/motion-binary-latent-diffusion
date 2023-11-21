@@ -1,6 +1,8 @@
 # Other tools
 check.py
 
+archived
+
 # Other dependencies
 t2m
 glove
@@ -16,9 +18,12 @@ docker_run.sh
 # Data
 dataset/HumanML3D
 dataset/KIT-ML
+dataset/MotionX
 
 # Saves
 save/
+logs/
+datasets/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
