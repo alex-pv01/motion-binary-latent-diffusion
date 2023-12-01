@@ -14,7 +14,7 @@ from models.encoding.mbae import MotionBinaryAutoEncoder
 from models.encoding.utils import load_mbinaryae_from_checkpoint
 from models.log_utils import log, log_stats, save_model, save_stats, config_log, start_training_log, save_motion
 from data_loaders.get_data import DataModule
-from train.ema import EMA
+from train.utils import EMA
 
 from hparams import get_mbae_hparams
 
@@ -168,19 +168,19 @@ def main(args, project, namenow):
             code = code > 0.5
             latent_ids.append(code)
             # pdb.set_trace()
-            # if step % 200 == 0 and step > 0:
-            #     # pdb.set_trace()
-            #     latent_ids = torch.cat(latent_ids, dim=0).permute(1,0,2,3).reshape(args.codebook_size, -1)
-            #     codesample_size = latent_ids.shape[1]
-            #     latent_ids = latent_ids * 1.0
+            if step % 200 == 0 and step > 0:
+                # pdb.set_trace()
+                latent_ids = torch.cat(latent_ids, dim=0).permute(1,0,2,3).reshape(args.codebook_size, -1)
+                codesample_size = latent_ids.shape[1]
+                latent_ids = latent_ids * 1.0
 
-            #     latent_ids = latent_ids.sum(-1)
+                latent_ids = latent_ids.sum(-1)
 
-            #     odd_idx = ((latent_ids == 0) * 1.0).sum() + ((latent_ids == codesample_size) * 1.0).sum()
+                odd_idx = ((latent_ids == 0) * 1.0).sum() + ((latent_ids == codesample_size) * 1.0).sum()
                 
-            #     if int(args.codebook_size - odd_idx) != args.codebook_size:
-            #         log(f'Codebook size: {args.codebook_size}   Unique Codes Used in Epoch: {args.codebook_size - odd_idx}')
-            #     latent_ids = []
+                if int(args.codebook_size - odd_idx) != args.codebook_size:
+                    log(f'Codebook size: {args.codebook_size}   Unique Codes Used in Epoch: {args.codebook_size - odd_idx}')
+                latent_ids = []
                 
             if step % args.steps_per_log == 0:
                 losses = np.append(losses, stats['loss'].item())
