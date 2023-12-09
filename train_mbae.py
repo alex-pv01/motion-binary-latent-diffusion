@@ -6,9 +6,9 @@ import random
 import datetime
 import time
 import os
-from tqdm import tqdm
+os.environ["OMP_NUM_THREADS"] = "4"
 
-from torchvision.transforms.functional import hflip
+from tqdm import tqdm
 
 from models.encoding.mbae import MotionBinaryAutoEncoder
 from models.encoding.utils import load_mbinaryae_from_checkpoint
@@ -37,6 +37,9 @@ def main(args, project, namenow):
     # Log the hyperparameters as config
     wandb.config.update(args)
 
+    # Set cuda visible devices
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+
     # Set up the device
     if args.gpu is not None:
         print("Using GPU: {}".format(args.gpu))
@@ -44,6 +47,8 @@ def main(args, project, namenow):
     else:
         print("Using CPU")
         device = torch.device("cpu")
+
+    device = torch.device("cuda:0")
     print("Device: {}".format(device))
 
     # Initialize the model at device
@@ -127,6 +132,21 @@ def main(args, project, namenow):
 
     step = start_step - 1
     num_epochs = 2000
+    return_input = True
+
+    if args.dataset_type == 'smplx' or 'joints':
+        from visualize.tomato_representation.motion_representation import J2NJConverter
+        # Required to convert to set the offset of the skeleton
+        example_data_path = '/home/apujol/mbld/datasets/MotionX/MotionX/datasets/motion_data/joint/humanml/000030.npy'
+        j2nj_converter = J2NJConverter(example_data_path=example_data_path)
+    else:
+        j2nj_converter = None
+
+    if args.dataset_type == 'smplx':
+        from visualize.tomato_representation.raw_pose_processing import S2JConverter
+        s2j_converter = S2JConverter(device)
+    else:
+        s2j_converter = None
 
     print("Starting training loop..")
     # Train the model
@@ -136,19 +156,19 @@ def main(args, project, namenow):
             step += 1
             step_start_time = time.time()
 
-            print("batch_idx: ", batch_idx)
-            print("batch: ", batch)
+            # print("batch_idx: ", batch_idx)
+            # print("batch: ", batch)
             
 
             if args.amp:
                 optim.zero_grad()
                 with torch.cuda.amp.autocast():
-                    x_hat, stats = mbinaryae.training_step(batch, device)
+                    x_hat, stats, x_input = mbinaryae.training_step(batch, device, return_input=return_input)
                 scaler.scale(stats['loss']).backward()
                 scaler.step(optim)
                 scaler.update()
             else:
-                x_hat, stats = mbinaryae.training_step(batch, device)
+                x_hat, stats, x_input = mbinaryae.training_step(batch, device, return_input=return_input)
                 optim.zero_grad()
                 stats['loss'].backward()
                 optim.step()
@@ -170,7 +190,8 @@ def main(args, project, namenow):
             # pdb.set_trace()
             if step % 200 == 0 and step > 0:
                 # pdb.set_trace()
-                latent_ids = torch.cat(latent_ids, dim=0).permute(1,0,2,3).reshape(args.codebook_size, -1)
+                # print('shape: ', latent_ids[0].shape)
+                latent_ids = torch.cat(latent_ids, dim=0).permute(1,0,2).reshape(args.codebook_size, -1)
                 codesample_size = latent_ids.shape[1]
                 latent_ids = latent_ids * 1.0
 
@@ -201,10 +222,31 @@ def main(args, project, namenow):
                 print()
                 print("Saving output for step {}".format(step))  
                 if args.ema:
-                    x_hat, _ = ema_mbinaryae.training_step(batch, device)
-
-                save_motion(motion=x_hat.permute(0,2,1).detach().cpu().numpy(), mot_name=batch['name'], desc=batch['text'],  step=step, log_dir=args.log_dir)
-
+                    x_hat, _, x_input = ema_mbinaryae.training_step(batch, device, return_input=return_input)
+                save_motion(dataset_type=args.dataset_type, 
+                            motion=x_hat.permute(0,2,1).detach().cpu().numpy(), 
+                            lengths=batch['length'], 
+                            mot_name=batch['name'], 
+                            desc=batch['text'],  
+                            step=step, 
+                            j2nj=j2nj_converter,
+                            s2j=s2j_converter,
+                            log_dir=args.log_dir,
+                            device=device)         
+                if return_input:
+                    print("Saving input for step {}".format(step))
+                    save_motion(dataset_type=args.dataset_type, 
+                                motion=x_input.permute(0,2,1).detach().cpu().numpy(), 
+                                name='input', 
+                                lengths=batch['length'],
+                                mot_name=batch['name'], 
+                                desc=batch['text'],  
+                                step=step, 
+                                log_dir=args.log_dir,
+                                j2nj=j2nj_converter,
+                                s2j=s2j_converter,
+                                device=device)
+        
             if step % args.steps_per_checkpoint == 0 and step > args.load_step:
 
                 save_model(mbinaryae, 'mbinaryae', step, args.log_dir)

@@ -220,4 +220,4 @@ class AttnBlock(nn.Module):
 
 def Normalize(in_channels):
     # print("in_channels: ", in_channels)
-    return nn.GroupNorm(num_groups=16, num_channels=in_channels, eps=1e-6, affine=True)
+    return nn.GroupNorm(num_groups=4, num_channels=in_channels, eps=1e-6, affine=True)

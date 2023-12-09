@@ -55,18 +55,18 @@ class BinaryVectorQuantizer(nn.Module):
 
     def forward(self, h, deterministic=False):
 
-        print("h shape: ", h.shape)
+        # print("h shape: ", h.shape)
         z = self.proj(h)
 
-        print("z shape: ", z.shape)
+        # print("z shape: ", z.shape)
         # code_book_loss = F.binary_cross_entropy_with_logits(z, (torch.sigmoid(z.detach())>0.5)*1.0)
         code_book_loss = (torch.sigmoid(z) * (1 - torch.sigmoid(z))).mean()
 
         z_b = self.quantizer(z, deterministic=deterministic)
 
         z_flow = z_b.detach() + z - z.detach()
-        print("z_b shape: ", z_b.shape)
-        print("z_flow shape: ", z_flow.shape)
+        # print("z_b shape: ", z_b.shape)
+        # print("z_flow shape: ", z_flow.shape)
         # print("z_b: ", z_b)
         # print("z_flow: ", z_flow)
 
@@ -77,7 +77,7 @@ class BinaryVectorQuantizer(nn.Module):
         #     "binary_code": z_b.detach()
         # }, z_b.detach()
 
-        print("z_q shape: ", z_q.shape)
+        # print("z_q shape: ", z_q.shape)
         # print("z_q: ", z_q)
 
         return z_q,  code_book_loss, {"binary_code": z_b.detach()}, z_b.detach()

@@ -25,6 +25,7 @@ class MotionBinaryAutoEncoder(nn.Module):
         self.mse_w = H.mse_weight
         self.l1_w = H.l1_weight
         self.key = H.key
+        self.dataset_type = H.dataset_type
 
         self.encoder = Encoder(
             self.in_channels,
@@ -40,81 +41,127 @@ class MotionBinaryAutoEncoder(nn.Module):
         self.mseloss = MSELoss()
         self.l1loss = L1Loss()
 
+        if self.dataset_type == 'smplx':
+            self.linear_input = nn.Linear(322, 320)
+            self.linear_output = nn.Linear(320, 322)
+
         print(self.encoder)
         print(self.quantize)
         print(self.generator)
-        
-        
-    def get_input(self, batch, k):
+
+
+    def get_input(self, batch, lengths, k=None):
         """
         Get input from batch as (B, F, J, C) tensor and permutes it to (B*F, C, J).
         Where B is bach, F is frames, J is joints and C is channels or coordinates.
         """
-        #print("Keys: ", batch.keys())
-        #print(type(batch))
-        #print(type(batch[k]))
-        #print(k)
+        # print("Keys: ", batch.keys())
+        # print(type(batch))
+        # print(type(batch[k]))
+        # print(k)
         #print(batch[k].shape)
-
-        x = batch[k]
-        elements = []
-        for element in x:
-
-            try:
-                element = element.permute(0,2,1)
-            except:
-                assert len(element.shape) == 2
-                # Add a dummy dimension for channels
-                element = element.unsqueeze(0)
-                element = element.permute(0,2,1)
-            
-            elements.append(element)
-            #print("element shape: ", element.shape)
-        x = torch.cat(elements, dim=0)
-        #print("x shape: ", x.shape)
-        return x.float()
-
-
-    def forward(self, x, code_only=False, code=None):
-        if code is None:
-            x = self.encoder(x)
-            quant, codebook_loss, quant_stats, binary = self.quantize(x, deterministic=self.deterministic)
-            if code_only:
-                return binary
+        # print("batch lengths: ", batch['length'])
+        # print("GET INPUT")
+        if isinstance(batch, torch.Tensor):
+            x = batch
         else:
-            quant = torch.einsum("b n h w, n d -> b d h w", code, self.quantize.embed.weight)
-            codebook_loss, quant_stats = None, None
-        x = self.generator(quant)
-        return x, codebook_loss, quant_stats
+            x = batch[k]
+        # print("x len: ", len(x))
+
+        elements = []
+        # print("x shape: ", x.shape)
+        if self.dataset_type == 'newjoints':
+            for idx in range(x.shape[0]):
+                element = x[idx, :, :, :lengths[idx]]
+                # print("element shape: ", element.shape)
+                # try:
+                element = element.permute(2,0,1)
+                # except:
+                #     assert len(element.shape) == 2
+                #     # Add a dummy dimension for channels
+                #     element = element.unsqueeze(0)
+                #     element = element.permute(2,0,1)
+
+                elements.append(element)
+                # print("element shape: ", element.shape)
+            x = torch.cat(elements, dim=0)
+            # print("x shape: ", x.shape)
+            return x.float()
+
+        elif self.dataset_type == 'smplx':
+            for idx in range(x.shape[0]):
+                element = x[idx, :lengths[idx], :]
+                # print("element shape: ", element.shape)
+                try:
+                    assert len(element.shape) == 2
+                    # Add a dummy dimension for channels
+                    element = element.unsqueeze(0)
+                    element = element.permute(1,0,2)
+                except:
+                    element = element.permute(1,0,2)
+
+                elements.append(element)
+                # print("element shape: ", element.shape)
+            x = torch.cat(elements, dim=0)
+            # print("x shape: ", x.shape)
+            return x.float()
 
 
-    def training_step(self, batch, device='cpu'):
-        stats = {}
-
-        x = self.get_input(batch, self.key)
-        x = x.to(device)
+    def forward(self, x, lengths=None, code_only=False, code=None, device=None):
         # print('x shape: ', x.shape)
 
         # assert shape is (n, 3, 52)
         # assert len(x.shape) == 3 and x.shape[1] == 3 and x.shape[2] == 52, f"Shape of input is not (n, 3, 52): {x.shape}"
         # assert there are no NaNs
         # assert (x != x).sum() == 0, f"Input contains NaNs: {batch}"
+        if code is None:
+            assert lengths is not None, "Lengths must be provided"
+            # print('AUTOENCODER')
+            # print('x shape: ', x.keys())
+            x_input = self.get_input(x, lengths, self.key)
+            # print('x_input shape: ', x_input.shape)
+            if device is not None:
+                x_input = x_input.to(device)
+            if self.dataset_type == 'smplx':
+                x = self.linear_input(x_input)
+                # print('x shape: ', x.shape)
+            x = self.encoder(x_input)
+            # print('x shape: ', x.shape)
+            quant, codebook_loss, quant_stats, binary = self.quantize(x, deterministic=self.deterministic)
+            if code_only:
+                return binary
+        else:
+            quant = torch.einsum("b n w, n d -> b d w", code, self.quantize.embed.weight)
+            codebook_loss, quant_stats = None, None
+            x_input = None
+        x = self.generator(quant)
+        # print('x shape: ', x.shape)
 
-        x_hat, codebook_loss, quant_stats = self(x)
+        if self.dataset_type == 'smplx':
+            x = self.linear_output(x)
+
+        return x, codebook_loss, quant_stats, x_input
+
+
+    def training_step(self, batch, device='cpu', return_input=False):
+        stats = {}
+
+        x_hat, codebook_loss, quant_stats, x_input = self(batch, device=device)
         # print('x_hat shape: ', x_hat.shape)
+        # print('x_input shape: ', x_input.shape)
 
         # get reconstruction loss
         if self.l1_w > 0.0:
-            l1_loss = self.l1loss(x, x_hat)
+            l1_loss = self.l1loss(x_input, x_hat)
             l1_loss = torch.mean(l1_loss)
         else:
-            l1_loss = torch.tensor(0.0).to(x.device).detach()
+            l1_loss = torch.tensor(0.0).to(x_input.device).detach()
 
         if self.mse_w > 0.0:
-            mse_loss = self.mseloss(x, x_hat)
+            mse_loss = self.mseloss(x_input, x_hat)
             mse_loss = torch.mean(mse_loss)
         else:
-            mse_loss = torch.tensor(0.0).to(x.device).detach()
+            mse_loss = torch.tensor(0.0).to(x_input.device).detach()
 
         # get loss
         loss = self.mse_w * mse_loss + self.l1_w * l1_loss + self.code_w * codebook_loss
@@ -128,7 +175,9 @@ class MotionBinaryAutoEncoder(nn.Module):
 
         if "mean_distance" in stats:
             stats["mean_code_distance"] = quant_stats["mean_distance"].item()
-        
+
+        if return_input:
+            return x_hat, stats, x_input
         return x_hat, stats
 
 
@@ -167,7 +216,7 @@ class MotionBinaryAutoEncoder(nn.Module):
         stats["latent_ids"] = quant_stats["binary_code"]
 
         return x_hat, stats
-    
+
 
     @torch.no_grad()
     def log_motions(self):
@@ -179,7 +228,7 @@ class MotionBinaryAutoEncoder(nn.Module):
     def smplx2joint(self, smplx):
         #TODO: use scripts from tomato
         raise NotImplementedError("TODO: implement smplx2joint")
-    
+
 
     @torch.no_grad()
     def joint2newjoint(self, joint):

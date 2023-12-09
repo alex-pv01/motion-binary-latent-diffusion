@@ -147,10 +147,11 @@ def save_images(images, im_name, step, log_dir, save_individually=False, name='i
         )
 
 
-def save_motion(motion, mot_name, step, log_dir, save_individually=False, name='motion', desc=None):
-    log_dir = os.path.join(log_dir, name)
-    os.makedirs(log_dir, exist_ok=True)
+def save_motion(dataset_type, motion, mot_name, step, log_dir, lengths, j2nj=None, s2j=None, name='motion', desc=None, device=None):
+    log_dir_motion = os.path.join(log_dir, name)
+    os.makedirs(log_dir_motion, exist_ok=True)
 
+    # body,hand joint idx
     # 2*3*5=30, left first, then right
     hand_joints_id = [i for i in range(25, 55)]
     body_joints_id = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
@@ -164,22 +165,52 @@ def save_motion(motion, mot_name, step, log_dir, save_individually=False, name='
         21, 40, 41, 42], [21, 37, 38, 39], [21, 49, 50, 51]]
     t2m_body_hand_kinematic_chain = t2m_kinematic_chain + t2m_left_hand_chain + t2m_right_hand_chain
 
-    # if save_individually:
-    #     for idx in range(len(motion)):
-    #         if motion[idx].shape[1] != 52:
-    #             motion[idx] = motion[idx][:, body_joints_id+hand_joints_id, :]
-    #         xyz = motion[idx].reshape(1, -1, 52, 3)
-    #         pose_vis = draw_to_batch_smplh(xyz, t2m_body_hand_kinematic_chain, title_batch=im_name[idx], outname=[im_name[idx]], log_dir=log_dir, step=step)
-    # else:
-    if motion.shape[1] != 52:
+    if dataset_type == 'newjoints':
+        if motion.shape[1] != 52:
+            # print(f'motion.shape: {motion.shape}')
+            motion = motion[:, body_joints_id+hand_joints_id, :]
+            # print(f'motion.shape: {motion.shape}')
         # print(f'motion.shape: {motion.shape}')
-        motion = motion[:, body_joints_id+hand_joints_id, :]
-        # print(f'motion.shape: {motion.shape}')
-    # print(f'motion.shape: {motion.shape}')
-    xyz = motion.reshape(1, -1, 52, 3)
-    # print(f'xyz.shape: {xyz.shape}')
-    pose_vis = draw_to_batch_smplh(xyz, t2m_body_hand_kinematic_chain, title_batch=desc, outname=mot_name, log_dir=log_dir, step=step)
+        xyz = motion.reshape(1, -1, 52, 3)
+        # print(f'xyz.shape: {xyz.shape}')
+        xyzs = []
+        for i in range(len(lengths)):
+            # print('lengths[i]: ', lengths[i])
+            xyzs.append(xyz[:, :int(lengths[i].item()), :, :])
+            xyz = xyz[:, int(lengths[i].item()):, :, :]
+            # print(f'xyzs[i].shape: {xyzs[i].shape}')
+        pose_vis = draw_to_batch_smplh(xyzs[0], t2m_body_hand_kinematic_chain, title_batch=desc, outname=mot_name, log_dir=log_dir_motion, step=step)
 
+    elif dataset_type == 'smplx':
+        assert j2nj is not None, 'j2nj is None'
+        assert s2j is not None, 's2j is None'
+
+        log_dir_smplx = os.path.join(log_dir, 'smplx_322')
+        os.makedirs(log_dir_smplx, exist_ok=True)
+    
+        # print(f'motion.shape: {motion.shape}')
+    
+        # Get the first smplx motion
+        print("Saving smplx motion...")
+        smplx = motion[:int(lengths[0].item()), :, :].squeeze(-1)
+        # print(f'smplx type: {type(smplx)}')
+        # print(f'smplx.shape: {smplx.shape}')
+        # Save the first smplx motion as .npy file
+        save_path = os.path.join(log_dir_smplx, f'{mot_name[0]}_{step:09}.npy')
+        np.save(save_path, smplx)
+        # Preprocess smplx motion
+        # print(f'smplx.shape: {smplx.shape}')
+        smplx = torch.from_numpy(smplx).unsqueeze(0).to(device)
+        print("Converting smplx motion to joint representation...")
+        joint = s2j.convert(smplx, save_path)
+        # print(f'joint.shape: {joint.shape}')
+        # Convert joint to newjoint's format
+        print("Converting joint representation to newjoint representation...")
+        newjoint = j2nj.convert(save_path, joint, d_type='smplx_322')
+        # print(f'newjoint.shape: {newjoint.shape}')
+        # Create 3D motion representation
+        print("Creating 3D motion representation...")
+        pose_vis = draw_to_batch_smplh([newjoint], t2m_body_hand_kinematic_chain, title_batch=desc, outname=mot_name, log_dir=log_dir_motion, step=step)
 
         
 def save_results(images, im_name, step, log_dir, temp, save_individually=False):
@@ -252,16 +283,16 @@ def load_stats(H, step):
     return stats
 
 
-def set_up_visdom(H):
-    server = H.visdom_server
-    try:
-        if server:
-            vis = visdom.Visdom(server=server, port=H.visdom_port)
-        else:
-            vis = visdom.Visdom(port=H.visdom_port)
-        return vis
+# def set_up_visdom(H):
+#     server = H.visdom_server
+#     try:
+#         if server:
+#             vis = visdom.Visdom(server=server, port=H.visdom_port)
+#         else:
+#             vis = visdom.Visdom(port=H.visdom_port)
+#         return vis
 
-    except Exception:
-        log_str = "Failed to set up visdom server - aborting"
-        log(log_str, level="error")
-        raise RuntimeError(log_str)
+#     except Exception:
+#         log_str = "Failed to set up visdom server - aborting"
+#         log(log_str, level="error")
+#         raise RuntimeError(log_str)

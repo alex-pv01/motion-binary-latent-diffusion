@@ -63,11 +63,15 @@ def main(H, project, namenow):
     else:
         print("Using CPU")
         device = torch.device("cpu")
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(H.gpu)
+    device = torch.device("cuda:0")
     print("Device: {}".format(device))
 
     # Load the autoencoder
     mbinaryae = MotionBinaryAutoEncoder(H)
-    mbinaryae.load_state_dict(mbae_state_dict, strict=True)
+    #mbinaryae.load_state_dict(mbae_state_dict, strict=True)
+    mbinaryae.load_state_dict(mbae_state_dict, strict=False)
     mbinaryae = mbinaryae.cuda(device)
     del mbae_state_dict
 
@@ -202,15 +206,20 @@ def main(H, project, namenow):
             adjust_lr(optim, lr_sched, step)
             step_start_time = time.time()
 
-            motions = batch['motion'].cuda()
+            motions, cond = batch
+            # print('cond keys: ', cond['y'].keys())
             # print("motions: ", motions.shape)
-            # print("motions: ", motions)
-            texts = batch['texts'].cuda()
-            # print("texts: ", texts.shape)
+            
+            texts = cond['y']['text']
+            tokens = cond['y']['tokens']
+            lengths = cond['y']['lengths']
+            names = cond['y']['name']
             # print("texts: ", texts)
+            # print("tokens: ", tokens)
+            # print("lengths: ", lengths)
 
             with torch.no_grad():
-                code = mbinaryae(motions, code_only=True).detach()
+                code = mbinaryae(motions, lengths=lengths, code_only=True, device=device).detach()
                 # print("code: ", code.shape)
                 # print("code: ", code)
                 b,c,w = code.shape
@@ -218,10 +227,31 @@ def main(H, project, namenow):
                 # print("x: ", x.shape)
                 # print("x: ", x)
 
+            # Split x by length of the motion
+            # print('Splitting x by length of the motion')
+            x = torch.split(x, lengths.int().tolist(), dim=0)
+            # print("x: ", x[0].shape)
+            # print("x len: ", len(x))
+            # print("x: ", x)
+
+            # Fill with zeros to match the max length
+            mxs = []
+            for idx, length in enumerate(lengths):
+                if length < H.max_length:
+                    mx = torch.cat([x[idx],
+                                    torch.zeros((H.max_length - length, x[idx].shape[1], x[idx].shape[2]), device=device)],
+                                dim=0)
+                else:
+                    mx = x[idx]
+                mx = mx.permute(1,2,0)
+                mxs.append(mx)
+            x = torch.stack(mxs, dim=0)
+            # print("x: ", x.shape)
+
             with torch.cuda.amp.autocast(enabled=H.amp):
-                if H.conditioned = True:
+                if H.conditioned == True:
                     # print("Text conditioned")
-                    stats = sampler(x, texts)
+                    stats = sampler(x, cond['y'])
                     # print("stats: ", stats)
                 else:
                     # print("No text conditioning")
@@ -235,10 +265,10 @@ def main(H, project, namenow):
             if step == 0:
                 print()
                 print("Saving output for step {}".format(step))  
-                motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, x=x)
+                motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, x=x, lengths=lengths)
                 # print("images: ", images.shape)
                 # print("images: ", images)
-                save_motion(motion=motions.detach().cpu().numpy(), mot_name=batch['name'], desc=batch['text'],  step=step, log_dir=args.log_dir)
+                save_motion(dataset_type=H.dataset_type, motion=motions.detach().cpu().numpy(), mot_name=names, desc=texts, lengths=lengths,  step=step, log_dir=H.log_dir)
                 # save to test the reconstruction quality
 
             grad_norm = scaler(loss, optim, clip_grad=H.grad_norm,
@@ -273,17 +303,23 @@ def main(H, project, namenow):
 
 
             if step % H.steps_per_save_output == 0:
+                if H.conditioned:
+                    # print("CONDITIONED")
+                    label = {'lengths': lengths[0], 'text': texts[0]}
+                    # print("label: ", label)
+                else:
+                    label = None
                 if H.guidance:
                     # print("guidance")
-                    motions = get_online_motions_guidance(H, mbinaryae, ema_sampler if H.ema else sampler)
+                    motions = get_online_motions_guidance(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
                 else:
                     # print("no guidance")
-                    motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler)
+                    motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
                 print()
                 print("Saving output for step {}".format(step))
                 # print("motions: ", motions.shape)
                 # print("motions: ", motions)
-                save_motion(motion=motions.detach().cpu().numpy(), mot_name=batch['name'], desc=batch['text'],  step=step, log_dir=args.log_dir)
+                save_motion(dataset_type=H.dataset_type, motion=motions.detach().cpu().numpy(), mot_name=[names[0]], desc=[texts[0]], lengths=[lengths[0]],  step=step, log_dir=H.log_dir)
 
 
             if step % H.steps_per_checkpoint == 0 and step > H.load_step:
@@ -311,7 +347,6 @@ def main(H, project, namenow):
 
 if __name__ == '__main__':
     H = get_mbld_hparams()
-
     
     # Set project name
     project = "training-motion-bld"

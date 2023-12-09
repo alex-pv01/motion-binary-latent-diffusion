@@ -1,20 +1,25 @@
 import os
 import pdb
 import numpy as np 
-import misc
+#import misc
 import time
 import torch
 from tqdm import tqdm
-from pyrsistent import l
+#from pyrsistent import l
 
 from models.log_utils import save_latents, log
 from models.diffusion_modules.binary_diffusion import BinaryDiffusion
 from models.diffusion_modules.transformer import TransformerBD
+from models.diffusion_modules.mdm import MDM
 
 
 def get_mbld(H, embedding_weight):
 
-    if H.sampler == 'mbld':
+    if H.sampler == 'mdm':
+        denoise_fn = MDM(H).cuda()
+        print(denoise_fn)
+        sampler = BinaryDiffusion(H, denoise_fn, H.codebook_size, embedding_weight)
+    elif H.sampler == 'trans':
         denoise_fn = TransformerBD(H).cuda()
         print(denoise_fn)
         sampler = BinaryDiffusion(H, denoise_fn, H.codebook_size, embedding_weight)
@@ -248,55 +253,82 @@ def get_t2i_samples_guidance_test(H, generator, sampler, label, x=None, g=None, 
         return images
 
 @torch.no_grad()
-def get_online_motions(H, generator, sampler, x=None,):
-
+def get_online_motions(H, generator, sampler, x=None, lengths=None, label=None):
+    # print('GET ONLINE MOTIONS')
     if x is None:
         latents_all = []
 
         sampler.eval()
 
-        print('Sampling')
-        for t in np.linspace(0.55, 1.0, num=10):
+        # print('Sampling')
+        # for t in np.linspace(0.55, 1.0, num=2):
+        t = np.random.uniform(0.55, 1.0)
+        if H.conditioned:
+            assert label is not None, 'label must be provided for conditioned sampling'
+            latents = sampler.sample(sample_steps=H.sample_steps, temp=t, label=label)
+        else:
             latents = sampler.sample(sample_steps=H.sample_steps, temp=t)
-            print('latents', latents.shape)
-            latents_all.append(latents)
-        latents = torch.cat(latents_all, dim=0)
-        print('latents', latents.shape)
+            # print('latents', latents.shape)
+        #     latents_all.append(latents)
+        # latents = torch.cat(latents_all, dim=1)
+        # print('latents', latents.shape)
+
+        latents = generator.get_input(latents, lengths=[latents.shape[-1]])
         sampler.train()
 
     else:
-        latents = x
+        # print('LATENTS GIVEN')
+        # print('x shape', x.shape)
+        latents = generator.get_input(x, lengths)
+    
+    # print('latents', latents.shape)
 
-    print('Sampling done')
+    # print('Sampling done')
 
     with torch.cuda.amp.autocast():
         # latents_one_hot = latent_ids_to_onehot(latents, H.latent_shape, H.codebook_size)
-        print('latents', latents.shape)
-        size = min(5, latents.shape[0])
-        print('size', size)
-        motions = []
-        for i in range(len(latents)//size):
-            latent = latents[i*size : (i+1)*size]
-            print('latent', latent.shape)
-            print('latent', latent)
-            latent = (latent * 1.0) 
-            print('latent', latent)
+        # print('latents', latents.shape)
+        # size = min(5, latents.shape[0])
+        # print('size', size)
+        # motions = []
+        # for i in range(len(latents)//size):
+        #     latent = latents[i*size : (i+1)*size]
+        #     print('latent', latent.shape)
+        #     # print('latent', latent)
+        #     latent = (latent * 1.0) 
+        #     # print('latent', latent)
 
-            if H.use_tanh:
-                latent = (latent - 0.5) * 2.0
+        #     if H.use_tanh:
+        #         latent = (latent - 0.5) * 2.0
 
-            if not H.norm_first:
-                latent = latent / float(H.codebook_size)
+        #     if not H.norm_first:
+        #         latent = latent / float(H.codebook_size)
 
-            latent = latent.permute(0,2,1)
-            print('latent', latent.shape)
-            latent = latent.reshape(*latent.shape[:-1], H.latent_shape[1], H.latent_shape[2])
-            print('latent', latent.shape)
-            mot, _, _ = generator(None, code=latent.float())
-            print('mot', mot.shape)
-            motions.append(mot)
-        motions = torch.cat(motions, 0)
-        print('motions', motions.shape)
+        #     latent = latent.permute(0,2,1)
+        #     print('latent', latent.shape)
+        #     latent = latent.reshape(*latent.shape[:-1], H.latent_shape[2])
+        #     print('latent', latent.shape)
+        #     mot, _, _ = generator(None, code=latent.float())
+        #     print('mot', mot.shape)
+        #     motions.append(mot)
+        # motions = torch.cat(motions, 0)
+        # print('latents', latents.shape)
+        # print('motions', motions.shape)
+
+        latents = latents * 1.0
+
+        if H.use_tanh:
+            latents = (latents - 0.5) * 2.0
+        
+        if not H.norm_first:
+            latents = latents / float(H.codebook_size)
+
+        # print('latents', latents.shape)
+        latents = latents.permute(0,2,1)
+        # print('latents', latents.shape)
+        motions, _, _, _ = generator(None, code=latents.float())
+        motions = motions.permute(0,2,1)
+        # print('motions', motions.shape)       
 
     return motions
 
@@ -379,9 +411,9 @@ def latent_ids_to_onehot(latent_ids, latent_shape, codebook_size):
 def retrieve_mbae_components_state_dicts(H, components_list, remove_component_from_key=False):
     state_dict = {}
     # default to loading ema models first
-    ae_load_path = f"{H.ae_load_dir}/saved_models/binaryae_ema_{H.ae_load_step}.th"
+    ae_load_path = f"{H.ae_load_dir}/saved_models/mbinaryae_ema_{H.ae_load_step}.th"
     if not os.path.exists(ae_load_path):
-        ae_load_path = f"{H.ae_load_dir}/saved_models/binaryae_{H.ae_load_step}.th"
+        ae_load_path = f"{H.ae_load_dir}/saved_models/mbinaryae_{H.ae_load_step}.th"
     log(f"Loading Binary Autoencoder from {ae_load_path}")
     full_vqgan_state_dict = torch.load(ae_load_path, map_location="cpu")
 

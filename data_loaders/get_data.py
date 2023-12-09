@@ -4,7 +4,7 @@
 from torch.utils.data import DataLoader
 
 from data_loaders.tensors import collate as all_collate
-from data_loaders.motionx.data.utils import mx_collate
+from data_loaders.motionx.data.utils import mx_collate, t2m_collate
 
 
 def get_dataset_class(name):
@@ -15,11 +15,11 @@ def get_dataset_class(name):
         raise ValueError(f'Unsupported dataset name [{name}]')
 
 def get_collate_fn(name, hml_mode='train'):
-    if hml_mode == 'gt':
-        from data_loaders.humanml.data.dataset import collate_fn as t2m_eval_collate
-        return t2m_eval_collate
+    # if hml_mode == 'gt':
+    #     from data_loaders.humanml.data.dataset import collate_fn as t2m_eval_collate
+    #     return t2m_eval_collate
     if name == "motionx":
-        return mx_collate
+        return t2m_collate
     else:
         return all_collate
 

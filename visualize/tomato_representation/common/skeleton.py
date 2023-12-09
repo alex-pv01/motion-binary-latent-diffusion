@@ -41,7 +41,7 @@
 # https://github.com/EricGuo5513/HumanML3D
 # ------------------------------------------------------------------------------------------------
 
-from common.quaternion import *
+from visualize.tomato_representation.common.quaternion import *
 import scipy.ndimage.filters as filters
 
 class Skeleton(object):

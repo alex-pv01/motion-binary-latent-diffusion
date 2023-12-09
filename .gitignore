@@ -8,6 +8,7 @@ t2m
 glove
 kit
 body_models
+visualize-motion.ipynb
 
 #WandB
 wandb

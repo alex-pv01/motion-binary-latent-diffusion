@@ -49,8 +49,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from smplx2joints import get_smplx_layer, process_smplx_322_data
-from dataset import MotionDatasetV2, mld_collate
+from visualize.tomato_representation.smplx2joints import get_smplx_layer, process_smplx_322_data
+from visualize.tomato_representation.dataset import MotionDatasetV2, mld_collate
 from torch.utils.data import DataLoader
 from collections import defaultdict
 
@@ -76,78 +76,120 @@ def findAllFile(base):
     return file_path
 
 
-print('Loading SMPL-X model...')
-# Get SMPLX layer and model using a custom function get_smplx_layer
-smplx_layer, smplx_model = get_smplx_layer(comp_device)
-print('smplx_layer: ', smplx_layer)
-print('smplx_model: ', smplx_model)
-print('Done!')
+# print('Loading SMPL-X model...')
+# # Get SMPLX layer and model using a custom function get_smplx_layer
+# smplx_layer, smplx_model = get_smplx_layer(comp_device)
+# print('smplx_layer: ', smplx_layer)
+# print('smplx_model: ', smplx_model)
+# print('Done!')
 
-print('Loading motion data...')
-# change your path here with Motion-X SMPLX format with 322 dims
-train_dataset = MotionDatasetV2(root_path='/home/apujol/mbld/datasets/MotionX/MotionX/datasets/motion_data',
-                                debug=False)
-print('Done!')
-print('Loading data loader...')
-train_loader = DataLoader(train_dataset, batch_size=2, drop_last=False,
-                          num_workers=4, shuffle=False, collate_fn=mld_collate)
-print('Done!')
+# print('Loading motion data...')
+# # change your path here with Motion-X SMPLX format with 322 dims
+# train_dataset = MotionDatasetV2(root_path='/home/apujol/mbld/datasets/MotionX/MotionX/datasets/motion_data',
+#                                 debug=False)
+# print('Done!')
+# print('Loading data loader...')
+# train_loader = DataLoader(train_dataset, batch_size=2, drop_last=False,
+#                           num_workers=4, shuffle=False, collate_fn=mld_collate)
+# print('Done!')
 
 
-def amass_to_pose(src_motion, src_path, length):
-    """
-    Convert AMASS SMPL-X motion data to pose representation and save joint positions.
+class S2JConverter():
+    def __init__(self, device) -> None:
+        self.device = device
+        self.smplx_layer, self.smplx_model = get_smplx_layer(device)
+    
+    def convert(self, src_motion, src_path):
+        """
+        Convert AMASS SMPL-X motion data to pose representation and save joint positions.
 
-    Args:
-        src_motion (torch.Tensor): Input SMPL-X motion data.
-        src_path (list): List of paths to the source motion data.
-        length (list): List of motion sequence lengths.
+        Args:
+            src_motion (torch.Tensor): Input SMPL-X motion data.
+            src_path (list): List of paths to the source motion data.
+            length (list): List of motion sequence lengths.
 
-    Returns:
-        None
-    """
-    # frame id of the mocap sequence
-    fId = 0
-    pose_seq = []
+        Returns:
+            None
+        """
+        # frame id of the mocap sequence
+        fId = 0
+        pose_seq = []
 
-    # Process SMPLX 322-dimensional data
-    vert, joints, pose, faces = process_smplx_322_data(
-        src_motion, smplx_layer, smplx_model, device=comp_device)
+        # Process SMPLX 322-dimensional data
+        vert, joint, pose, faces = process_smplx_322_data(src_motion, self.smplx_layer, self.smplx_model, device=self.device)
 
-    # Add global joint offsets to the processed joints
-    joints += src_motion[..., 309:312].unsqueeze(2)
+        # Add global joint offsets to the processed joints
+        joint += src_motion[..., 309:312].unsqueeze(2)
 
-    # Iterate over frames to extract joint positions and save them to individual files
-    for i in range(joints.shape[0]):
-        joint = joints[i][:int(length[i])].detach().cpu().numpy()
         # change the save folder
-        save_path = src_path[i].replace('/smplx_322/', '/joint/')
+        save_path = src_path.replace('/smplx_322/', '/joint/')
+        print('save_path: ', save_path)
         os.makedirs(os.path.split(save_path)[0], exist_ok=True)
+        joint = joint.detach().cpu().numpy()
         np.save(save_path, joint)
 
+        return joint
 
-exceptions = defaultdict(list)
-# Iterate over batches in the training loader using tqdm for progress tracking
-for batch_data in tqdm(train_loader):
-    # Move motion data to the computation device (e.g., GPU)
-    motion = batch_data['motion'].to(comp_device)
-    name = batch_data['name']
-    length = batch_data['length']
 
-    # Call the 'amass_to_pose' function to convert SMPL-X motion data to pose representation
-    # and save joint positions for each batch
-    try:
-        amass_to_pose(motion, name, length)
-    except:
-        exceptions[name].append(motion.shape, length)
 
-print('Exceptions: ', len(exceptions))
+# def amass_to_pose(src_motion, src_path, length, device, online=False):
+#     """
+#     Convert AMASS SMPL-X motion data to pose representation and save joint positions.
 
-# Save exceptions to a file
-with open('exceptions.txt', 'w') as f:
-    for k, v in exceptions.items():
-        f.write(str(k) + '\n')
-        f.write(str(v) + '\n')
-        f.write('\n')
+#     Args:
+#         src_motion (torch.Tensor): Input SMPL-X motion data.
+#         src_path (list): List of paths to the source motion data.
+#         length (list): List of motion sequence lengths.
 
-print('Done!')
+#     Returns:
+#         None
+#     """
+#     # frame id of the mocap sequence
+#     fId = 0
+#     pose_seq = []
+
+#     # Process SMPLX 322-dimensional data
+#     vert, joints, pose, faces = process_smplx_322_data(
+#         src_motion, smplx_layer, smplx_model, device=device)
+
+#     # Add global joint offsets to the processed joints
+#     joints += src_motion[..., 309:312].unsqueeze(2)
+
+#     # Iterate over frames to extract joint positions and save them to individual files
+#     for i in range(joints.shape[0]):
+#         joint = joints[i][:int(length[i])].detach().cpu().numpy()
+#         # change the save folder
+#         save_path = src_path[i].replace('/smplx_322/', '/joint/')
+#         print('save_path: ', save_path)
+#         os.makedirs(os.path.split(save_path)[0], exist_ok=True)
+#         np.save(save_path, joint)
+#         if online:
+#             return joint
+
+
+
+# exceptions = defaultdict(list)
+# # Iterate over batches in the training loader using tqdm for progress tracking
+# for batch_data in tqdm(train_loader):
+#     # Move motion data to the computation device (e.g., GPU)
+#     motion = batch_data['motion'].to(comp_device)
+#     name = batch_data['name']
+#     length = batch_data['length']
+
+#     # Call the 'amass_to_pose' function to convert SMPL-X motion data to pose representation
+#     # and save joint positions for each batch
+#     try:
+#         amass_to_pose(motion, name, length)
+#     except:
+#         exceptions[name].append(motion.shape, length)
+
+# print('Exceptions: ', len(exceptions))
+
+# # Save exceptions to a file
+# with open('exceptions.txt', 'w') as f:
+#     for k, v in exceptions.items():
+#         f.write(str(k) + '\n')
+#         f.write(str(v) + '\n')
+#         f.write('\n')
+
+# print('Done!')

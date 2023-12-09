@@ -1,4 +1,5 @@
 import torch
+from math import inf
 
 class EMA():
     def __init__(self, beta):

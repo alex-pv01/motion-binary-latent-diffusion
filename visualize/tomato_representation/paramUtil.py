@@ -43,6 +43,7 @@
 
 import numpy as np
 
+
 # Define a kinematic tree for the skeletal struture
 kit_kinematic_chain = [[0, 11, 12, 13, 14, 15], [
     0, 16, 17, 18, 19, 20], [0, 1, 2, 3, 4], [3, 5, 6, 7], [3, 8, 9, 10]]

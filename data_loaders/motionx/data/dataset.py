@@ -42,12 +42,13 @@ import os
 from torch.utils import data
 from tqdm import tqdm
 import numpy as np
-import torch
+import random
 
 from data_loaders.motionx.data.utils import findAllFile
-from data_loaders.motionx.data.text_preprocess import TextPreprocess
+from data_loaders.motionx.data.text_tokenizer import TextTokenizer
 from data_loaders.motionx.data.word_vectorizer import WordVectorizer
 
+GLOVE_PATH = "/home/apujol/mbld/glove"
 
 class MotionDataset(data.Dataset):
     # Custom dataset class for motion data
@@ -92,6 +93,15 @@ class MotionX(data.Dataset):
         self.data = []
         self.lengths = []
 
+        # Minimum and maximum lengths of the motion data
+        self.min_length = 10
+        self.max_length = 500
+
+        self.text_tokenizer = TextTokenizer()
+        self.word_vectorizer = WordVectorizer(GLOVE_PATH, 'our_vab')
+
+        self.max_text_length = 20
+
         # Finding all motions in motion_path
         if debug:
             self.motion_id_list = findAllFile(motions_path, debug=debug)
@@ -123,6 +133,10 @@ class MotionX(data.Dataset):
                 rel_path = os.path.relpath(motion_path, motions_path).split('.')[0]
                 text_path = os.path.join(texts_path, rel_path + '.txt')
                 motion = np.load(motion_path)
+                # If the motion is too short or too long, go to exception
+                if motion.shape[0] < self.min_length or motion.shape[0] > self.max_length:
+                    print('Warning - Motion file {} has length {}.'.format(motion_path, motion.shape[0]))
+                    raise Exception('Motion file {} has length {}.'.format(motion_path, motion.shape[0]))
                 # If there are nan values go to exception
                 if np.isnan(motion).any():
                     print('Warning - Motion file {} contains nan values.'.format(motion_path))
@@ -132,28 +146,47 @@ class MotionX(data.Dataset):
                 name = motion_path.split('/')[-1].split('.')[0]
                 # Check if is a HumanML3D motion 
                 if rel_path.split('/')[0] == 'humanml':
-                    # Split text on # and get the first element
                     text = text.splitlines()
                     for line in text:
-                        line = line.split('#')[0]
-                        assert isinstance(line, str)
-                        self.lengths.append(motion.shape[0])
-                        self.data.append({'motion': motion, 
-                                        'motion_path': motion_path,
-                                        'text': line,
-                                        'text_path': text_path,
-                                        'name': name})
+                        line_split = line.split('#')
+                        caption = line_split[0]
+                        tokens = self.text_tokenizer.tokenize(caption)
+                        assert isinstance(caption, str)
+                        f_tag = 0.0 if np.isnan(float(line_split[2])) else float(line_split[2])
+                        to_tag = 0.0 if np.isnan(float(line_split[3])) else float(line_split[3])
+                        if f_tag == 0.0 and to_tag == 0.0:
+                            self.lengths.append(motion.shape[0])
+                            self.data.append({'motion': motion, 
+                                            'motion_path': motion_path,
+                                            'text': caption,
+                                            'text_path': text_path,
+                                            'tokens': tokens,
+                                            'name': name})
+                        else:
+                            n_motion = motion[int(f_tag*20):int(to_tag*20)]
+                            if n_motion.shape[0] < self.min_length or n_motion.shape[0] > self.max_length:
+                                continue
+                            else:
+                                self.lengths.append(n_motion.shape[0])
+                                self.data.append({'motion': n_motion, 
+                                                'motion_path': motion_path,
+                                                'text': caption,
+                                                'text_path': text_path,
+                                                'tokens': tokens,
+                                                'name': name})
                 else:
                     assert isinstance(text, str)
+                    tokens = self.text_tokenizer.tokenize(text)
                     self.lengths.append(motion.shape[0])
                     self.data.append({'motion': motion, 
                                     'motion_path': motion_path,
                                     'text': text,
                                     'text_path': text_path,
+                                    'tokens': tokens,
                                     'name': name})
             except:
                 print('Warning - Motion file {} not loaded.'.format(motion_path))
-        
+                
 
     def __len__(self):
         # Returns the number of items in the dataset
@@ -162,14 +195,42 @@ class MotionX(data.Dataset):
 
     def __getitem__(self, item):
         # Returns motion data, file name, and length for a given item
-
         motion = self.data[item]['motion']
         motion_path = self.data[item]['motion_path']
         text = self.data[item]['text']
         text_path = self.data[item]['text_path']
+        tokens = self.data[item]['tokens']
         name = self.data[item]['name']
-        length = self.lengths[item]
+        m_length = self.lengths[item]
 
-        return motion, motion_path, text, text_path, name, length
+        if len(tokens) < self.max_text_length:
+            # pad with "unk"
+            tokens = ['sos/OTHER'] + tokens + ['eos/OTHER']
+            sent_len = len(tokens)
+            tokens = tokens + ['unk/OTHER'] * (self.max_text_length + 2 - sent_len)
+        else:
+            # crop
+            tokens = tokens[:self.max_text_length]
+            tokens = ['sos/OTHER'] + tokens + ['eos/OTHER']
+            sent_len = len(tokens)
 
+        # Vectorize text
+        pos_one_hots = []
+        word_embeddings = []
+        for token in tokens:
+            word_emb, pos_oh = self.word_vectorizer[token]
+            pos_one_hots.append(pos_oh[None, :])
+            word_embeddings.append(word_emb[None, :])
+        pos_one_hots = np.concatenate(pos_one_hots, axis=0)
+        word_embeddings = np.concatenate(word_embeddings, axis=0)
+
+        # print('motion.shape', motion.shape)
+        if m_length < self.max_length:
+            motion = np.concatenate([motion,
+                                     np.zeros((self.max_length - m_length, motion.shape[1], motion.shape[2]))
+                                     ], axis=0)
+            
+
+        #return motion, motion_path, text, text_path, name, length, word_embeddings, pos_one_hots, sent_len, tokens
+        return word_embeddings, pos_one_hots, text, sent_len, motion, m_length, '_'.join(tokens), name
 

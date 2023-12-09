@@ -82,6 +82,7 @@ class TransformerBD(nn.Module):
         self.block_size = H.block_size
         self.n_layers = H.bert_n_layers
         self.codebook_size = H.codebook_size
+        self.n_heads = H.bert_n_head
 
         self.tok_emb = nn.Embedding(self.vocab_size, self.n_embd)
         self.tok_emb.weight.data.normal_(0.0, 0.02)
@@ -93,10 +94,11 @@ class TransformerBD(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, H.drop_path, self.n_layers)]
 
         self.exp_type = 'unconditional'
-        if not H.cross and H.dataset.startswith('laion'):
-            self.cls_embedding = nn.Linear(768, H.bert_n_emb)
+        if not H.cross and H.dataset.startswith('motionx'):
+            # self.cls_embedding = nn.Linear(768, H.bert_n_emb)
+            self.cls_embedding = nn.Linear(100, self.n_embd)
             self.exp_type = 't2i_tkn'
-        if H.cross and H.dataset.startswith('laion'):
+        if H.cross and H.dataset.startswith('motionx'):
             self.exp_type = 't2i_cross'
             block_type = CrossBlock
         if H.dataset.startswith('imagenet'):
@@ -107,13 +109,17 @@ class TransformerBD(nn.Module):
 
         # decoder head
         self.ln_f = nn.LayerNorm(self.n_embd)
-        self.head = nn.Linear(self.n_embd, self.codebook_size, bias=True)
+        #self.head = nn.Linear(self.n_embd, self.codebook_size, bias=True)
+        self.heads = nn.ModuleList([nn.Linear(self.n_embd, self.codebook_size, bias=True) for _ in range(self.n_heads)])
 
         self.sample_steps = H.sample_steps
 
         self.time_step_embedding = AdaTkn_Time(self.n_embd, self.sample_steps)
 
-        self.pos_emb = nn.Parameter(torch.Tensor(get_2d_sincos_pos_embed(self.n_embd, H.latent_shape[-1])).unsqueeze(0))
+        # 1-dim positional embedding
+        self.pos_emb = nn.Parameter(torch.Tensor(get_1d_sincos_pos_embed(self.n_embd, H.latent_shape[-1])).unsqueeze(0))
+        # print('self.pos_emb', self.pos_emb)
+        # print('H.latent_shape', H.latent_shape)
 
     def get_block_size(self):
         return self.block_size
@@ -128,44 +134,70 @@ class TransformerBD(nn.Module):
             module.weight.data.fill_(1.0)
     
     def forward(self, idx, label=None, time_steps=None,):
+        # print('TRANSFORMER FORWARD')
         # pdb.set_trace()
         # each index maps to a (learnable) vector
         # token_embeddings = self.tok_emb(idx)
+        # print('idx', idx.shape)
+        # print('idx', idx)
         if idx.shape[1] == 0:
             token_embeddings = torch.zeros(idx.shape[0], 0, self.n_embd).to('cuda')
         else:
             # token_embeddings = (idx*1.0) @ self.tok_emb.weight #/ float(self.n_embd)
             token_embeddings = (idx*1.0 - 0.5) * 2.0 @ self.tok_emb.weight #/ float(self.n_embd)
-
+        # print('token_embeddings', token_embeddings.shape)
+        # print('token_embeddings', token_embeddings)
         t = token_embeddings.shape[1]
-
+        # print('t', t)
+        # print('self.pos_emb', self.pos_emb.shape)
         position_embeddings = self.pos_emb[:, :t, :]
-
+        # print('position_embeddings', position_embeddings.shape)
+        # print('position_embeddings', position_embeddings)
         x = token_embeddings + position_embeddings
-
+        # print('x', x.shape)
         time_tkn = True
         # time_tkn = False
         time_emb = self.time_step_embedding(time_steps)
+        # print('time_emb', time_emb.shape)
         if time_tkn:
             x = torch.cat([x, time_emb], 1)
         else:
             x = x + time_emb
 
+        # print('x', x.shape)
+
         if self.exp_type.endswith('tkn') and label != None:
             # pdb.set_trace()
-            cls_emb = self.cls_embedding(label).unsqueeze(1)
+            print('label', label)
+            print('label type', type(label))
+            print('label shape', label.shape)
+            print('label dtype', label.dtype)
+            cls_emb = self.cls_embedding(label.float()).unsqueeze(0).repeat(x.shape[0], 1, 1)
+            # print('cls_emb', cls_emb.shape)
             # x = x + cls_emb
+            # print('x', x.shape)
+            # print('cls_emb', cls_emb.shape)
             x = torch.cat([x, cls_emb], 1)
-
+            # print('x', x.shape)
         x = self.drop(x)
+        # print('x', x.shape)
         for i, block in enumerate(self.blocks):
             if self.exp_type == 't2i_cross':
+                # print('label', label)
                 x = block(x, label)
             else:
                 x = block(x)
-
+            # print('x', x.shape)
+        # print('self.block_size', self.block_size)
         x = x[:, :self.block_size, :]
-        logits = self.head(self.ln_f(x))
+        # print('x', x.shape)
+        for i, head in enumerate(self.heads):
+            if i == 0:
+                logits = head(self.ln_f(x))
+            else:
+                logits = logits + head(x)
+        # logits = self.head(self.ln_f(x))
+        # print('logits', logits.shape)
         return logits
 
 
@@ -253,7 +285,11 @@ class CrossAttention(nn.Module):
         assert H.bert_n_emb % H.bert_n_head == 0
         # key, query, value projections for all heads
         if dim is None:
-            dim = H.text_emb
+            # print("CROSS ATTENTION DIM IS NONE")
+            # dim = H.text_emb
+            dim = H.bert_n_emb
+        # print("CROSS ATTENTION")
+        # print("dim", dim)
         self.kv = nn.Linear(dim, H.bert_n_emb*2)
         self.query = nn.Linear(H.bert_n_emb, H.bert_n_emb)
         # regularization
@@ -269,11 +305,21 @@ class CrossAttention(nn.Module):
     def forward(self, x, c, layer_past=None):
         # pdb.set_trace()
         B, T, C = x.size()
+        # print("CROSS ATTENTION FORWARD")
+        # print("B", B)
+        # print("T", T)
+        # print("C", C)
+        # print("x", x.shape)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         if c is None:
             c = self.null_emb.repeat(B, 1, 1)
+        elif len(c.shape) == 1:
+            c = c.unsqueeze(1).unsqueeze(2).repeat(1, 1, C).float()
+        # print("c", c.shape)
+        # print("c dtype", c.dtype)
         kv = self.kv(c)
+        # print("kv", kv.shape)
         kv = einops.rearrange(kv, 'B L (K H D) -> K B H L D', K=2, H=self.n_head)
         k, v = kv[0], kv[1]
         
@@ -350,6 +396,19 @@ class CrossBlock(nn.Module):
         x = x + self.drop_path(self.gamma_1_5 * self.cross(self.ln1_5(x), c))
         x = x + self.drop_path(self.gamma_2 * self.mlp(self.ln2(x)))
         return x
+    
+
+def get_1d_sincos_pos_embed(embed_dim, grid_size):
+    """
+    embed_dim: output dimension for each position
+    grid_size: int of the grid height and width
+    return:
+    pos_embed: [grid_size*grid_size, embed_dim]
+    """
+    grid = np.arange(grid_size, dtype=float)
+    pos_embed = get_1d_sincos_pos_embed_from_grid(embed_dim, grid)
+    return pos_embed
+
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """
@@ -371,12 +430,15 @@ def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
 
 def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
     assert embed_dim % 2 == 0
-
+    print("GET 2D SINCOS POS EMBED FROM GRID")
+    print("embed_dim", embed_dim)
     # use half of dimensions to encode grid_h
     emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
     emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
-
+    print("emb_h", emb_h)
+    print("emb_w", emb_w)
     emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
+    print("emb", emb)
     return emb
 
 
