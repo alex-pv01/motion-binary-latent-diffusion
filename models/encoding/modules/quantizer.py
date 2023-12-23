@@ -54,30 +54,36 @@ class BinaryVectorQuantizer(nn.Module):
 
 
     def forward(self, h, deterministic=False):
-
-        # print("h shape: ", h.shape)
+        # print('QUANTIZER FORWARD')
+        # print("quantizer input shape: ", h.shape) # torch.Size([bs, 4, 13])
+        # print("projection module", self.proj) # conv1d(4, 32, 1, 1) + sigmoid
         z = self.proj(h)
+        # print('self.codebook_size: ', self.codebook_size) # 32
+        # print('self.emb_dim: ', self.emb_dim) # 4
+        # print("z shape: ", z.shape) # torch.Size([bs, 32, 13])
 
-        # print("z shape: ", z.shape)
         # code_book_loss = F.binary_cross_entropy_with_logits(z, (torch.sigmoid(z.detach())>0.5)*1.0)
+        # print("compute codebook loss")
         code_book_loss = (torch.sigmoid(z) * (1 - torch.sigmoid(z))).mean()
+        # print("loss: ", code_book_loss) # tensor(0.2499)
 
+        # print("Apply bernoulli sampling")
         z_b = self.quantizer(z, deterministic=deterministic)
-
         z_flow = z_b.detach() + z - z.detach()
-        # print("z_b shape: ", z_b.shape)
-        # print("z_flow shape: ", z_flow.shape)
-        # print("z_b: ", z_b)
-        # print("z_flow: ", z_flow)
+        # print("z_b shape: ", z_b.shape) # torch.Size([bs, 32, 13])
+        # print("z_flow shape: ", z_flow.shape) # torch.Size([bs, 32, 13])
+        # print("z_b: ", z_b) # binary tensor
+        # print("z_flow: ", z_flow) # binary-float tensor with gradients
 
-
+        # print("Apply code embedding")
         z_q = torch.einsum("b n w, n d -> b d w", z_flow, self.embed.weight)
+        # print("embedding weights shape", self.embed.weight.shape) # torch.Size([32, 4])
 
         # return z_q,  code_book_loss, {
         #     "binary_code": z_b.detach()
         # }, z_b.detach()
 
-        # print("z_q shape: ", z_q.shape)
-        # print("z_q: ", z_q)
+        # print("z_q shape: ", z_q.shape) # torch.Size([bs, 4, 13])
+        # print("z_q: ", z_q) # embedded binary-float tensor with gradients
 
         return z_q,  code_book_loss, {"binary_code": z_b.detach()}, z_b.detach()

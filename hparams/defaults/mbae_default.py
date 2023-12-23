@@ -18,13 +18,13 @@ class HparamsMBAE(HparamsBase):
         if self.dataset_type == 'newjoints':
             self.attn_resolutions = [13,26]
             self.batch_size = 4
-            self.ch_mult = [1, 1, 1]
-            self.codebook_size = 128
+            self.ch_mult = [1, 2, 4]
+            self.codebook_size = 32
             self.emb_dim = 4
             self.resolution = 52
-            self.latent_shape = [1, 16, 13]
+            self.latent_shape = [1, 4, 13]
             self.n_channels = 3
-            self.nf = 64
+            self.nf = 128
             self.code_weight = 1.0
             self.mse_weight = 1.0
             self.l1_weight = 1.0
@@ -55,6 +55,22 @@ class HparamsMBAE(HparamsBase):
             self.emb_dim = 16
             self.resolution = 322
             self.latent_shape = [1, 16, 40]
+            self.n_channels = 1
+            self.nf = 128
+            self.code_weight = 1.0
+            self.mse_weight = 1.0
+            self.l1_weight = 1.0
+            self.res_blocks = 2
+            self.key='motion'
+
+        elif self.dataset_type == 'newjointvecs':
+            self.attn_resolutions = [16,32]
+            self.batch_size = 4
+            self.ch_mult = [1, 1, 1, 2, 4]
+            self.codebook_size = 64
+            self.emb_dim = 16
+            self.resolution = 263
+            self.latent_shape = [1, 16, 16]
             self.n_channels = 1
             self.nf = 64
             self.code_weight = 1.0

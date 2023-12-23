@@ -45,8 +45,8 @@ import numpy as np
 import random
 
 from data_loaders.motionx.data.utils import findAllFile
-from data_loaders.motionx.data.text_tokenizer import TextTokenizer
-from data_loaders.motionx.data.word_vectorizer import WordVectorizer
+# from data_loaders.motionx.data.text_tokenizer import TextTokenizer
+# from data_loaders.motionx.data.word_vectorizer import WordVectorizer
 
 GLOVE_PATH = "/home/apujol/mbld/glove"
 
@@ -94,11 +94,11 @@ class MotionX(data.Dataset):
         self.lengths = []
 
         # Minimum and maximum lengths of the motion data
-        self.min_length = 10
-        self.max_length = 500
+        self.min_length = 100
+        self.max_length = 200
 
-        self.text_tokenizer = TextTokenizer()
-        self.word_vectorizer = WordVectorizer(GLOVE_PATH, 'our_vab')
+        # self.text_tokenizer = TextTokenizer()
+        # self.word_vectorizer = WordVectorizer(GLOVE_PATH, 'our_vab')
 
         self.max_text_length = 20
 
@@ -108,19 +108,19 @@ class MotionX(data.Dataset):
         else:
             if split == 'train':
                 # Read the train list
-                train_list = open("/home/apujol/mbld/datasets/MotionX/MotionX/datasets/train.txt").read().splitlines()
+                train_list = open("/home/apujol/mbld/datasets/MotionX/datasets/train.txt").read().splitlines()
                 self.motion_id_list = [os.path.join(motions_path, elem + ".npy") for elem in train_list]
             elif split == 'val':
                 # Read the val list
-                val_list = open("/home/apujol/mbld/datasets/MotionX/MotionX/datasets/val.txt").read().splitlines()
+                val_list = open("/home/apujol/mbld/datasets/MotionX/datasets/val.txt").read().splitlines()
                 self.motion_id_list = [os.path.join(motions_path, elem + ".npy") for elem in val_list]
             elif split == 'test':
                 # Read the test list
-                test_list = open("/home/apujol/mbld/datasets/MotionX/MotionX/datasets/test.txt").read().splitlines()
+                test_list = open("/home/apujol/mbld/datasets/MotionX/datasets/test.txt").read().splitlines()
                 self.motion_id_list = [os.path.join(motions_path, elem + ".npy") for elem in test_list]
             elif split == 'all':
                 # Read the test list
-                all_list = open("/home/apujol/mbld/datasets/MotionX/MotionX/datasets/all.txt").read().splitlines()
+                all_list = open("/home/apujol/mbld/datasets/MotionX/datasets/all.txt").read().splitlines()
                 self.motion_id_list = [os.path.join(motions_path, elem + ".npy") for elem in all_list]
             else:
                 raise ValueError('Unsupported split name [{split}]')
@@ -150,7 +150,7 @@ class MotionX(data.Dataset):
                     for line in text:
                         line_split = line.split('#')
                         caption = line_split[0]
-                        tokens = self.text_tokenizer.tokenize(caption)
+                        # tokens = self.text_tokenizer.tokenize(caption)
                         assert isinstance(caption, str)
                         f_tag = 0.0 if np.isnan(float(line_split[2])) else float(line_split[2])
                         to_tag = 0.0 if np.isnan(float(line_split[3])) else float(line_split[3])
@@ -160,7 +160,7 @@ class MotionX(data.Dataset):
                                             'motion_path': motion_path,
                                             'text': caption,
                                             'text_path': text_path,
-                                            'tokens': tokens,
+                                            # 'tokens': tokens,
                                             'name': name})
                         else:
                             n_motion = motion[int(f_tag*20):int(to_tag*20)]
@@ -172,17 +172,17 @@ class MotionX(data.Dataset):
                                                 'motion_path': motion_path,
                                                 'text': caption,
                                                 'text_path': text_path,
-                                                'tokens': tokens,
+                                                # 'tokens': tokens,
                                                 'name': name})
                 else:
                     assert isinstance(text, str)
-                    tokens = self.text_tokenizer.tokenize(text)
+                    # tokens = self.text_tokenizer.tokenize(text)
                     self.lengths.append(motion.shape[0])
                     self.data.append({'motion': motion, 
                                     'motion_path': motion_path,
                                     'text': text,
                                     'text_path': text_path,
-                                    'tokens': tokens,
+                                    # 'tokens': tokens,
                                     'name': name})
             except:
                 print('Warning - Motion file {} not loaded.'.format(motion_path))
@@ -199,30 +199,35 @@ class MotionX(data.Dataset):
         motion_path = self.data[item]['motion_path']
         text = self.data[item]['text']
         text_path = self.data[item]['text_path']
-        tokens = self.data[item]['tokens']
+        # tokens = self.data[item]['tokens']
         name = self.data[item]['name']
         m_length = self.lengths[item]
 
-        if len(tokens) < self.max_text_length:
-            # pad with "unk"
-            tokens = ['sos/OTHER'] + tokens + ['eos/OTHER']
-            sent_len = len(tokens)
-            tokens = tokens + ['unk/OTHER'] * (self.max_text_length + 2 - sent_len)
-        else:
-            # crop
-            tokens = tokens[:self.max_text_length]
-            tokens = ['sos/OTHER'] + tokens + ['eos/OTHER']
-            sent_len = len(tokens)
+        # if len(tokens) < self.max_text_length:
+        #     # pad with "unk"
+        #     tokens = ['sos/OTHER'] + tokens + ['eos/OTHER']
+        #     sent_len = len(tokens)
+        #     tokens = tokens + ['unk/OTHER'] * (self.max_text_length + 2 - sent_len)
+        # else:
+        #     # crop
+        #     tokens = tokens[:self.max_text_length]
+        #     tokens = ['sos/OTHER'] + tokens + ['eos/OTHER']
+        #     sent_len = len(tokens)
 
-        # Vectorize text
-        pos_one_hots = []
-        word_embeddings = []
-        for token in tokens:
-            word_emb, pos_oh = self.word_vectorizer[token]
-            pos_one_hots.append(pos_oh[None, :])
-            word_embeddings.append(word_emb[None, :])
-        pos_one_hots = np.concatenate(pos_one_hots, axis=0)
-        word_embeddings = np.concatenate(word_embeddings, axis=0)
+        # # Vectorize text
+        # pos_one_hots = []
+        # word_embeddings = []
+        # for token in tokens:
+        #     try:
+        #         word_emb, pos_oh = self.word_vectorizer[token]
+        #         pos_one_hots.append(pos_oh[None, :])
+        #         word_embeddings.append(word_emb[None, :])
+        #     except:
+        #         print('Warning - Token {} not found in dictionary.'.format(token))
+        #         pos_one_hots.append(np.zeros((1, 15)))
+        #         word_embeddings.append(np.zeros((1, 300)))
+        # pos_one_hots = np.concatenate(pos_one_hots, axis=0)
+        # word_embeddings = np.concatenate(word_embeddings, axis=0)
 
         # print('motion.shape', motion.shape)
         if m_length < self.max_length:
@@ -230,7 +235,7 @@ class MotionX(data.Dataset):
                                      np.zeros((self.max_length - m_length, motion.shape[1], motion.shape[2]))
                                      ], axis=0)
             
-
+       
         #return motion, motion_path, text, text_path, name, length, word_embeddings, pos_one_hots, sent_len, tokens
-        return word_embeddings, pos_one_hots, text, sent_len, motion, m_length, '_'.join(tokens), name
-
+        #return word_embeddings, pos_one_hots, text, sent_len, motion, m_length, '_'.join(tokens), name
+        return None, None, text, None, motion, m_length, None, name

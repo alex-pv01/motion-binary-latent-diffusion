@@ -3,12 +3,18 @@ check.py
 
 archived
 
+.gitignore
+
 # Other dependencies
 t2m
 glove
 kit
 body_models
 visualize-motion.ipynb
+clip
+clip_mld
+motion-latent-diffusion
+mld_logs
 
 #WandB
 wandb

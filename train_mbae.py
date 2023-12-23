@@ -134,10 +134,10 @@ def main(args, project, namenow):
     num_epochs = 2000
     return_input = True
 
-    if args.dataset_type == 'smplx' or 'joints':
+    if args.dataset_type in ['smplx', 'joints']:
         from visualize.tomato_representation.motion_representation import J2NJConverter
         # Required to convert to set the offset of the skeleton
-        example_data_path = '/home/apujol/mbld/datasets/MotionX/MotionX/datasets/motion_data/joint/humanml/000030.npy'
+        example_data_path = '/home/apujol/mbld/datasets/MotionX/datasets/motion_data/joint/humanml/000010.npy'
         j2nj_converter = J2NJConverter(example_data_path=example_data_path)
     else:
         j2nj_converter = None
@@ -156,19 +156,20 @@ def main(args, project, namenow):
             step += 1
             step_start_time = time.time()
 
-            # print("batch_idx: ", batch_idx)
-            # print("batch: ", batch)
-            
+            motion, cond = batch
+            lengths = cond['y']['lengths']
+
+            # print('motion shape: ', motion.shape)
 
             if args.amp:
                 optim.zero_grad()
                 with torch.cuda.amp.autocast():
-                    x_hat, stats, x_input = mbinaryae.training_step(batch, device, return_input=return_input)
+                    x_hat, stats, x_input = mbinaryae.training_step(motion, device, return_input=return_input, lengths=lengths)
                 scaler.scale(stats['loss']).backward()
                 scaler.step(optim)
                 scaler.update()
             else:
-                x_hat, stats, x_input = mbinaryae.training_step(batch, device, return_input=return_input)
+                x_hat, stats, x_input = mbinaryae.training_step(motion, device, return_input=return_input, lengths=lengths)
                 optim.zero_grad()
                 stats['loss'].backward()
                 optim.step()
@@ -222,12 +223,12 @@ def main(args, project, namenow):
                 print()
                 print("Saving output for step {}".format(step))  
                 if args.ema:
-                    x_hat, _, x_input = ema_mbinaryae.training_step(batch, device, return_input=return_input)
+                    x_hat, _, x_input = ema_mbinaryae.training_step(motion, device, return_input=return_input, lengths=lengths)
                 save_motion(dataset_type=args.dataset_type, 
                             motion=x_hat.permute(0,2,1).detach().cpu().numpy(), 
-                            lengths=batch['length'], 
-                            mot_name=batch['name'], 
-                            desc=batch['text'],  
+                            lengths=lengths, 
+                            mot_name=cond['y']['name'], 
+                            desc=cond['y']['text'],  
                             step=step, 
                             j2nj=j2nj_converter,
                             s2j=s2j_converter,
@@ -238,9 +239,9 @@ def main(args, project, namenow):
                     save_motion(dataset_type=args.dataset_type, 
                                 motion=x_input.permute(0,2,1).detach().cpu().numpy(), 
                                 name='input', 
-                                lengths=batch['length'],
-                                mot_name=batch['name'], 
-                                desc=batch['text'],  
+                                lengths=lengths,
+                                mot_name=cond['y']['name'], 
+                                desc=cond['y']['text'],  
                                 step=step, 
                                 log_dir=args.log_dir,
                                 j2nj=j2nj_converter,
@@ -279,7 +280,7 @@ if __name__ == '__main__':
     now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     # Set the name of current run
-    name = "mbvae"
+    name = "mbvae" + "_" + args.dataset
     namenow = name + "_" + now
 
     print("----------------------------------------")

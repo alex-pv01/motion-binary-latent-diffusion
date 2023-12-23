@@ -1,9 +1,12 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import drop_path
 
+import clip
+from transformers import T5Tokenizer, T5EncoderModel
 
 class Transformer(nn.Module):
     """  the full GPT language model, with a context size of block_size """
@@ -13,7 +16,8 @@ class Transformer(nn.Module):
 
         self.vocab_size = H.codebook_size + 1
         self.n_embd = H.bert_n_emb
-        self.block_size = H.block_size
+        #self.block_size = H.block_size
+        self.block_size = H.max_length * H.latent_shape[-1]
         self.n_layers = H.bert_n_layers
         self.codebook_size = H.codebook_size
         self.causal = H.sampler in ['autoregressive', 'arebm']
@@ -79,7 +83,8 @@ class TransformerBD(nn.Module):
 
         self.vocab_size = H.codebook_size
         self.n_embd = H.bert_n_emb
-        self.block_size = H.block_size
+        #self.block_size = H.block_size
+        self.block_size = H.max_length * H.latent_shape[-1]
         self.n_layers = H.bert_n_layers
         self.codebook_size = H.codebook_size
         self.n_heads = H.bert_n_head
@@ -89,6 +94,12 @@ class TransformerBD(nn.Module):
         
         self.drop = nn.Dropout(H.embd_pdrop)
 
+        self.gpu = H.gpu
+
+        self.cross = H.cross
+
+        self.max_text_length = H.max_text_length
+
         # transformer
         block_type = Block
         dpr = [x.item() for x in torch.linspace(0, H.drop_path, self.n_layers)]
@@ -96,14 +107,14 @@ class TransformerBD(nn.Module):
         self.exp_type = 'unconditional'
         if not H.cross and H.dataset.startswith('motionx'):
             # self.cls_embedding = nn.Linear(768, H.bert_n_emb)
-            self.cls_embedding = nn.Linear(100, self.n_embd)
+            self.cls_embedding = nn.Linear(H.text_emb, self.n_embd)
             self.exp_type = 't2i_tkn'
         if H.cross and H.dataset.startswith('motionx'):
             self.exp_type = 't2i_cross'
             block_type = CrossBlock
-        if H.dataset.startswith('imagenet'):
-            self.cls_embedding = nn.Embedding(H.num_classes, self.n_embd)
-            self.exp_type = 'class_tkn'
+        # if H.dataset.startswith('imagenet'):
+        #     self.cls_embedding = nn.Embedding(H.num_classes, self.n_embd)
+        #     self.exp_type = 'class_tkn'
 
         self.blocks = nn.Sequential(*[block_type(H, dpr[i]) for i in range(self.n_layers)])
 
@@ -114,12 +125,30 @@ class TransformerBD(nn.Module):
 
         self.sample_steps = H.sample_steps
 
-        self.time_step_embedding = AdaTkn_Time(self.n_embd, self.sample_steps)
+        device = torch.device('cuda' if self.gpu else 'cpu')
+        self.time_step_embedding = AdaTkn_Time(self.n_embd, self.sample_steps, device)
 
         # 1-dim positional embedding
-        self.pos_emb = nn.Parameter(torch.Tensor(get_1d_sincos_pos_embed(self.n_embd, H.latent_shape[-1])).unsqueeze(0))
+        # self.pos_emb = nn.Parameter(torch.Tensor(get_1d_sincos_pos_embed(self.n_embd, H.latent_shape[-1])).unsqueeze(0))
+        # self.pos_emb = nn.Parameter(torch.Tensor(get_2d_sincos_pos_embed(self.n_embd, H.latent_shape[-1])).unsqueeze(0))
+        self.pos_emb = nn.Parameter(torch.zeros(1, self.block_size, self.n_embd))
         # print('self.pos_emb', self.pos_emb)
         # print('H.latent_shape', H.latent_shape)
+
+        if H.cross:
+            self.T5tokenizer = T5Tokenizer.from_pretrained("t5-large", cache_dir=os.path.join(H.root_path, 'huggingface'))
+            self.T5model = T5EncoderModel.from_pretrained("t5-large", cache_dir=os.path.join(H.root_path, 'huggingface')).cuda()
+            self.text_emb = H.text_emb
+
+            #self.clip_model, _ = clip.load(os.path.join(H.clip_path, 'clip_models', 'ViT-B/16'))
+            self.clip_model, _ = clip.load(H.clip_version, device=device)
+            # if self.gpu:
+            #     self.clip_model = self.clip_model.cuda()
+        else:
+            #self.clip_model, _ = clip.load(os.path.join(H.clip_path, 'clip_models', 'ViT-B/16'))
+            self.clip_model, _ = clip.load(H.clip_version, device=device)
+            # if self.gpu:
+            #     self.clip_model = self.clip_model.cuda()
 
     def get_block_size(self):
         return self.block_size
@@ -133,71 +162,119 @@ class TransformerBD(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
     
-    def forward(self, idx, label=None, time_steps=None,):
-        # print('TRANSFORMER FORWARD')
+    def forward(self, x, label=None, time_steps=None,):
+        idx = x
+        bs = idx.shape[0]
+        print('TRANSFORMER FORWARD')
         # pdb.set_trace()
         # each index maps to a (learnable) vector
         # token_embeddings = self.tok_emb(idx)
-        # print('idx', idx.shape)
-        # print('idx', idx)
+        print('input shape', idx.shape) # torch.Size([bs, 2600, 32])
+        print('batch size', bs) # 8
+        device = idx.device
+        print("Each index maps to a learnable vector.")
         if idx.shape[1] == 0:
-            token_embeddings = torch.zeros(idx.shape[0], 0, self.n_embd).to('cuda')
+            token_embeddings = torch.zeros(idx.shape[0], 0, self.n_embd).to(device)
         else:
             # token_embeddings = (idx*1.0) @ self.tok_emb.weight #/ float(self.n_embd)
-            token_embeddings = (idx*1.0 - 0.5) * 2.0 @ self.tok_emb.weight #/ float(self.n_embd)
-        # print('token_embeddings', token_embeddings.shape)
+            token_embeddings = (idx*1.0 - 0.5) * 2.0 @ self.tok_emb.weight.to(device)
+        print('token_embeddings', token_embeddings.shape) # torch.Size([bs, 2600, 32])
         # print('token_embeddings', token_embeddings)
-        t = token_embeddings.shape[1]
-        # print('t', t)
-        # print('self.pos_emb', self.pos_emb.shape)
-        position_embeddings = self.pos_emb[:, :t, :]
-        # print('position_embeddings', position_embeddings.shape)
+        t = token_embeddings.shape[1] # 2600
+        print('t', t)
+        print('self.pos_emb shape', self.pos_emb.shape)
+        position_embeddings = self.pos_emb[:, :t, :].to(device)
+        print('position_embeddings', position_embeddings.shape) # torch.Size([1, 2600, 32])
         # print('position_embeddings', position_embeddings)
         x = token_embeddings + position_embeddings
-        # print('x', x.shape)
+        print("embedded input shape", x.shape) # torch.Size([bs, 2600, 32])
         time_tkn = True
         # time_tkn = False
+        # print('device time_steps', time_steps.device)
+        print("Embedding time steps.")
         time_emb = self.time_step_embedding(time_steps)
-        # print('time_emb', time_emb.shape)
+        print("timesteps shape", time_steps.shape) # torch.Size([bs])
+        print('time_emb', time_emb.shape) # torch.Size([bs, 1, 32])
         if time_tkn:
             x = torch.cat([x, time_emb], 1)
         else:
             x = x + time_emb
 
-        # print('x', x.shape)
+        print('x with time', x.shape) # torch.Size([bs, 2601, 32])
 
         if self.exp_type.endswith('tkn') and label != None:
             # pdb.set_trace()
-            print('label', label)
-            print('label type', type(label))
-            print('label shape', label.shape)
-            print('label dtype', label.dtype)
+            # print('label', label)
+            # print('label type', type(label))
+            # print('label shape', label.shape)
+            # print('label dtype', label.dtype)
+            print("Adding label.")
+            text = label['text']
+            print('text', text) # list of strings
+
+            if self.cross:
+                t5_tkn = self.T5tokenizer(text, max_length=self.max_text_length, padding='longest', truncation=True, return_tensors="pt").input_ids.cuda()
+                label = self.T5model(t5_tkn).last_hidden_state.detach().float()
+
+                clip_ckn = clip.tokenize(text).cuda()
+                labelc = self.clip_model.encode_text(clip_ckn).detach().float()
+
+                label = label.repeat(bs, 1, 1)
+                labelc = labelc.repeat(bs, 1)
+                label = [label, labelc.unsqueeze(1)]
+
+            else:
+                print("Tokenize with CLIP.")
+                if self.gpu is not None:
+                    t = clip.tokenize(text, context_length=self.max_text_length, truncate=True).cuda()
+                else:
+                    t = clip.tokenize(text, context_length=self.max_text_length, truncate=True)
+                print("tokenized text", t) # torch.Size([bs, 77]), dtype=torch.int32, mostly 0s
+                print("Encode with CLIP.")
+                label = self.clip_model.encode_text(t).detach().float()
+                print("encoded text shape", label.shape) # torch.Size([bs, 512])
+                print("encoded text", label) # tensor of floats, no 0s anymore
+                label = label.repeat(bs, 1)
+                print("repeated encoded text shape", label.shape) # torch.Size([bs*bs, 512]) #FIXME: OJITO QUE AIXÔ NO FA BONA PINTA
+
+            # print('label', label.shape)
+            print("Embed label.")
             cls_emb = self.cls_embedding(label.float()).unsqueeze(0).repeat(x.shape[0], 1, 1)
-            # print('cls_emb', cls_emb.shape)
+            print('cls_emb', cls_emb.shape) # torch.Size([bs, 64, 32]) #FIXME: OJITO QUE AIXÔ NO FA BONA PINTA
             # x = x + cls_emb
             # print('x', x.shape)
             # print('cls_emb', cls_emb.shape)
+            print("Concatenate label.")
             x = torch.cat([x, cls_emb], 1)
-            # print('x', x.shape)
+            print('x', x.shape) # torch.Size([bs, 2665, 32]) #FIXME: OJITO QUE AIXÔ NO FA BONA PINTA
+        print("Dropout.")
         x = self.drop(x)
-        # print('x', x.shape)
+        print('x', x.shape) # torch.Size([bs, 2665, 32])
         for i, block in enumerate(self.blocks):
+            print(f"Block {i}: ", block)
             if self.exp_type == 't2i_cross':
-                # print('label', label)
+                print("Cross attention with label.")
                 x = block(x, label)
+                print('x', x.shape) 
             else:
+                print("Self attention.") # enter here
                 x = block(x)
-            # print('x', x.shape)
-        # print('self.block_size', self.block_size)
+                print('x', x.shape) 
+                # Block 0, 1, 2 and 3: Attention + MLP + Dropout
+                # Output 0, 1, 2 and 3 shape: torch.Size([bs, 2665, 32])
+
+
+        print('self.block_size', self.block_size) # 2600 it is max_length * 13
         x = x[:, :self.block_size, :]
-        # print('x', x.shape)
+        print('x', x.shape) # torch.Size([bs, 2600, 32])
         for i, head in enumerate(self.heads):
+            print(f"Head {i}: ", head) # linear layer with 32 input and 32 output
             if i == 0:
                 logits = head(self.ln_f(x))
             else:
                 logits = logits + head(x)
         # logits = self.head(self.ln_f(x))
-        # print('logits', logits.shape)
+        print('logits', logits.shape) # torch.Size([bs, 2600, 32])
         return logits
 
 
@@ -266,16 +343,32 @@ class Attention(nn.Module):
         if self.qkv.bias is not None:
             self.qkv.bias.data.zero_()
     def forward(self, x):
+        print("ATTENTION FORWARD")
+        print("The input shape should be B L C")
+        print("x", x.shape) # torch.Size([8, 2665, 32]) so it's B L C
         B, L, C = x.shape
 
-        qkv = self.qkv(x)
+        print("Apply linear projection to the input")
+        qkv = self.qkv(x) 
+        print("qkv", qkv.shape) # torch.Size([8, 2665, 96]) so it's B L C*3
         qkv = einops.rearrange(qkv, 'B L (K H D) -> K B H L D', K=3, H=self.num_heads)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # B H L D
+        print("rearranged qkv", qkv.shape) # torch.Size([3, 8, 2, 2600, 16]) so it's K B H L D
+        q, k, v = qkv[0], qkv[1], qkv[2]  
+        print("q", q.shape) # torch.Size([8, 2, 2665, 16]) so it's B H L D
+        print("k", k.shape) # torch.Size([8, 2, 2665, 16]) so it's B H L D
+        print("v", v.shape) # torch.Size([8, 2, 2665, 16]) so it's B H L D
+        print("Apply scaled dot product attention")
         x = F.scaled_dot_product_attention(q, k, v)
-        x = einops.rearrange(x, 'B H L D -> B L (H D)', H=self.num_heads)
+        print("x", x.shape) # torch.Size([8, 2, 2600, 16]) so it's B H L D
+        x = einops.rearrange(x, 'B H L D -> B L (H D)', H=self.num_heads) 
+        print("rearranged x", x.shape) # torch.Size([8, 2665, 32]) so it's B L C
 
+        print("Apply linear projection to the output")
         x = self.proj(x)
+        print("x", x.shape) # torch.Size([8, 2665, 32]) so it's B L C
+        print("Apply dropout to the output")
         x = self.proj_drop(x)
+        print("x", x.shape) # torch.Size([8, 2665, 32]) so it's B L C
         return x
 
 class CrossAttention(nn.Module):
@@ -358,7 +451,7 @@ class Block(nn.Module):
         self.gamma_2 = nn.Parameter(init_values * torch.ones((H.bert_n_emb)), requires_grad=True)
 
     def forward(self, x):
-
+        print("TRANSFORMER BLOCK FORWARD")
         x = x + self.drop_path(self.gamma_1 * self.attn(self.ln1(x)))
         x = x + self.drop_path(self.gamma_2 * self.mlp(self.ln2(x)))
 
@@ -530,18 +623,24 @@ class AdaEMB_Cls(nn.Module):
         return emb
 
 class AdaTkn_Time(nn.Module):
-    def __init__(self, n_embd, diffusion_step, emb_type="adalayernorm_abs"):
+    def __init__(self, n_embd, diffusion_step, device, emb_type="adalayernorm_abs"):
         super().__init__()
         if "abs" in emb_type:
             self.emb = SinusoidalPosEmb(diffusion_step, n_embd)
         else:
-            self.emb = nn.Embedding(diffusion_step, n_embd)
-        self.silu = nn.SiLU()
-        self.linear = nn.Linear(n_embd, n_embd)
+            self.emb = nn.Embedding(diffusion_step, n_embd, device)
+        self.silu = nn.SiLU(device)
+        self.linear = nn.Linear(n_embd, n_embd, device)
         self.l0 = nn.Linear(n_embd, n_embd)
+        # print('DEVICE SELF.L0', self.l0.weight.device)
 
     def forward(self, timestep):
         # emb = self.linear(self.silu(self.emb(timestep))).unsqueeze(1)
+        emb = self.emb(timestep).to(timestep.device)
+        emb = self.l0(emb).to(timestep.device)
+        emb = self.silu(emb).to(timestep.device)
+        emb = self.linear(emb).unsqueeze(1).to(timestep.device)
+        return emb
         emb = self.linear(self.silu(self.l0(self.emb(timestep)))).unsqueeze(1)
         return emb
 

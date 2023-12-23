@@ -43,6 +43,10 @@ def collate(batch):
         textbatch = [b['tokens'] for b in notnone_batches]
         cond['y'].update({'tokens': textbatch})
 
+    if 'name' in notnone_batches[0]:
+        textbatch = [b['name'] for b in notnone_batches]
+        cond['y'].update({'name': textbatch})
+
     if 'action' in notnone_batches[0]:
         actionbatch = [b['action'] for b in notnone_batches]
         cond['y'].update({'action': torch.as_tensor(actionbatch).unsqueeze(1)})
@@ -56,3 +60,13 @@ def collate(batch):
 
 
 
+def t2m_collate(batch):
+    # batch.sort(key=lambda x: x[3], reverse=True)
+    adapted_batch = [{
+        'inp': torch.tensor(b[4].T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
+        'text': b[2], #b[0]['caption']
+        'tokens': b[6],
+        'lengths': b[5],
+        'name': b[7]
+    } for b in batch]
+    return collate(adapted_batch)

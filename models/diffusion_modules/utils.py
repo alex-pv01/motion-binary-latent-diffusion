@@ -20,7 +20,10 @@ def get_mbld(H, embedding_weight):
         print(denoise_fn)
         sampler = BinaryDiffusion(H, denoise_fn, H.codebook_size, embedding_weight)
     elif H.sampler == 'trans':
-        denoise_fn = TransformerBD(H).cuda()
+        if H.gpu is not None:
+            denoise_fn = TransformerBD(H).cuda()
+        else:
+            denoise_fn = TransformerBD(H)
         print(denoise_fn)
         sampler = BinaryDiffusion(H, denoise_fn, H.codebook_size, embedding_weight)
     else:
@@ -254,39 +257,42 @@ def get_t2i_samples_guidance_test(H, generator, sampler, label, x=None, g=None, 
 
 @torch.no_grad()
 def get_online_motions(H, generator, sampler, x=None, lengths=None, label=None):
-    # print('GET ONLINE MOTIONS')
+    print('GET ONLINE MOTIONS')
+
     if x is None:
-        latents_all = []
-
+        # latents_all = []
         sampler.eval()
-
-        # print('Sampling')
+        print('SAMPLING')
         # for t in np.linspace(0.55, 1.0, num=2):
         t = np.random.uniform(0.55, 1.0)
         if H.conditioned:
             assert label is not None, 'label must be provided for conditioned sampling'
-            latents = sampler.sample(sample_steps=H.sample_steps, temp=t, label=label)
+            if H.guidance:
+                g = 1.0
+                latents = sampler.sample(sample_steps=H.sample_steps, temp=t, label=label, guidance=g)
+            else:
+                latents = sampler.sample(sample_steps=H.sample_steps, temp=t, label=label)
         else:
             latents = sampler.sample(sample_steps=H.sample_steps, temp=t)
             # print('latents', latents.shape)
         #     latents_all.append(latents)
         # latents = torch.cat(latents_all, dim=1)
-        # print('latents', latents.shape)
+        print('latents', latents.shape) # torch.Size([bs, 2600, 32])
+        
+        lengths = label['lengths']
 
-        latents = generator.get_input(latents, lengths=[latents.shape[-1]])
+        # latents = generator.get_input(latents, lengths=[latents.shape[-1]])
         sampler.train()
+        print('Sampling done')
 
     else:
-        # print('LATENTS GIVEN')
-        # print('x shape', x.shape)
-        latents = generator.get_input(x, lengths)
+        print('LATENTS GIVEN')
+        latents = x
     
-    # print('latents', latents.shape)
-
-    # print('Sampling done')
+    print('latents', latents.shape) # torch.Size([bs, 2600, 32])
 
     with torch.cuda.amp.autocast():
-        # latents_one_hot = latent_ids_to_onehot(latents, H.latent_shape, H.codebook_size)
+        latents_one_hot = latent_ids_to_onehot(latents, H.latent_shape, H.codebook_size)
         # print('latents', latents.shape)
         # size = min(5, latents.shape[0])
         # print('size', size)
@@ -315,32 +321,60 @@ def get_online_motions(H, generator, sampler, x=None, lengths=None, label=None):
         # print('latents', latents.shape)
         # print('motions', motions.shape)
 
-        latents = latents * 1.0
+        # print('x shape', latents.shape)
+        if H.sampler_type == 'trans':
+            # print("Permute to fit generator input")
+            # raise NotImplementedError
+            latents = latents.permute(0,2,1)
+            # print("permuted latents", latents.shape) # torch.Size([bs, 32, 2600])
+            latents = latents.reshape(*latents.shape[:-1], H.latent_shape[2], H.max_length)
+            # print("reshaped latents", latents.shape) # torch.Size([bs, 32, 13, 200])
+        elif H.sampler_type == 'mdm':
+            latents = latents.permute(0,2,1,3)
+            print('permuted latents', latents.shape)
+        print('get input')
+        latents = generator.get_input(latents, lengths)
+        print('latents', latents.shape) # torch.Size([bs*sum(l_i), 32, 13])
 
+        latents = latents * 1.0
         if H.use_tanh:
             latents = (latents - 0.5) * 2.0
-        
         if not H.norm_first:
             latents = latents / float(H.codebook_size)
-
-        # print('latents', latents.shape)
-        latents = latents.permute(0,2,1)
-        # print('latents', latents.shape)
+        print('normalized latents', latents.shape) # torch.Size([bs*sum(l_i), 32, 13])
+        print("Generate motions")
         motions, _, _, _ = generator(None, code=latents.float())
+        print('motions generated shape', motions.shape)
         motions = motions.permute(0,2,1)
-        # print('motions', motions.shape)       
+        print('permuted motions', motions.shape)       
 
     return motions
 
 @torch.no_grad()
-def get_online_motions_guidance(H, generator, sampler, x=None,):
+def get_online_motions_guidance(H, generator, sampler, x=None, label=None):
 
+
+    if x is None:
+        sampler.eval()
+        t = np.random.uniform(0.55, 1.0)
+        g = 1.0
+        if H.conditioned:
+            assert label is not None, 'label must be provided for conditioned sampling'
+            latents = sampler.sample(sample_steps=H.sample_steps, temp=t, label=label, guidance=g)
+        else:
+            latents = sampler.sample(sample_steps=H.sample_steps, temp=t, guidance=g)
+        lengths = label['lengths']
+        sampler.train()
+
+    else:
+        # print('LATENTS GIVEN')
+        latents = x
     if x is None:
         latents_all = []
 
         sampler.eval()
 
-        print('Sampling')
+        # print('Sampling')
         for g in [None, 1.0, 2.0, 5.0, 10.0]:
             for t in [0.5, 0.9]:
                 latents = sampler.sample(sample_steps=H.sample_steps, temp=t, guidance=g)
@@ -348,7 +382,7 @@ def get_online_motions_guidance(H, generator, sampler, x=None,):
                 latents_all.append(latents)
                 # print('done')
         latents = torch.cat(latents_all, dim=0)
-        print('latents', latents.shape)
+        # print('latents', latents.shape)
         sampler.train()
     else:
         latents = x
@@ -416,11 +450,13 @@ def retrieve_mbae_components_state_dicts(H, components_list, remove_component_fr
         ae_load_path = f"{H.ae_load_dir}/saved_models/mbinaryae_{H.ae_load_step}.th"
     log(f"Loading Binary Autoencoder from {ae_load_path}")
     full_vqgan_state_dict = torch.load(ae_load_path, map_location="cpu")
+    # print('full_vqgan_state_dict', full_vqgan_state_dict.keys())
 
     for key in full_vqgan_state_dict:
         for component in components_list:
             if component in key:
-                new_key = key[3:]  # remove "ae."
+                # new_key = key[3:]  # remove "ae."
+                new_key = key
                 if remove_component_from_key:
                     new_key = new_key[len(component)+1:]  # e.g. remove "quantize."
 

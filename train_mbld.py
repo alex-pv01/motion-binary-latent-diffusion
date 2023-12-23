@@ -49,34 +49,41 @@ def main(H, project, namenow):
     # Retrieve the autoencoder components
     mbae_state_dict = retrieve_mbae_components_state_dicts(
         H,
-        ['encoder', 'quantize', 'generator'],
+        ['encoder', 'quantize', 'generator', 'linear_input', 'linear_output'],
         remove_component_from_key=False
     )
 
     # Log ae_state_dict as config
-    wandb.config.update(mbae_state_dict)
+    wandb.config.update(H)
 
     # Set up the device
+    # H.gpu = None
     if H.gpu is not None:
         print("Using GPU: {}".format(H.gpu))
-        device = torch.device("cuda:{}".format(H.gpu))
+        os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(H.gpu)
+        device = torch.device("cuda:0")
+        #device = torch.device("cuda:{}".format(H.gpu))
     else:
         print("Using CPU")
         device = torch.device("cpu")
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(H.gpu)
-    device = torch.device("cuda:0")
     print("Device: {}".format(device))
 
     # Load the autoencoder
     mbinaryae = MotionBinaryAutoEncoder(H)
-    #mbinaryae.load_state_dict(mbae_state_dict, strict=True)
-    mbinaryae.load_state_dict(mbae_state_dict, strict=False)
-    mbinaryae = mbinaryae.cuda(device)
+    mbinaryae.load_state_dict(mbae_state_dict, strict=True)
+    #mbinaryae.load_state_dict(mbae_state_dict, strict=False)
+    # if H.gpu is not None:
+    #     mbinaryae = mbinaryae.cuda(device)
+    mbinaryae = mbinaryae.to(device)    
     del mbae_state_dict
 
     # Initialize the sampler
-    sampler = get_mbld(H, mbinaryae.quantize.embed.weight).cuda(device)
+    sampler = get_mbld(H, mbinaryae.quantize.embed.weight)
+    # if H.gpu is not None:
+    #     sampler = sampler.cuda(device)
+    sampler = sampler.to(device)
 
     # Initialize the data module
     data_module = DataModule(batch_size=H.batch_size,
@@ -203,13 +210,15 @@ def main(H, project, namenow):
         #train_loader.sampler.set_epoch(epoch)
         for batch_idx, batch in tqdm(enumerate(train_loader), desc="Epoch {}/{}".format(epoch+1, num_epochs), total=len(train_loader)):
             step += 1
+            # print("BEGIN STEP")
+            # print("step: ", step)
             adjust_lr(optim, lr_sched, step)
             step_start_time = time.time()
-
-            motions, cond = batch
-            # print('cond keys: ', cond['y'].keys())
-            # print("motions: ", motions.shape)
             
+            # print("BATCH")
+            motions, cond = batch
+            # print("motions: ", motions.shape) # (bs, 3, 52, max_motion_length=200)
+            # print('cond keys: ', cond['y'].keys()) # mask, lengths, text, tokens, name
             texts = cond['y']['text']
             tokens = cond['y']['tokens']
             lengths = cond['y']['lengths']
@@ -219,22 +228,25 @@ def main(H, project, namenow):
             # print("lengths: ", lengths)
 
             with torch.no_grad():
+                # print("ENCODE MOTION")
                 code = mbinaryae(motions, lengths=lengths, code_only=True, device=device).detach()
-                # print("code: ", code.shape)
-                # print("code: ", code)
+                # print("code: ", code.shape) # torch.Size([bs*sum(l_i), cb=32, nj//4=13])
+                # print("code: ", code) # binary code
                 b,c,w = code.shape
                 x = code.permute(0,2,1).contiguous()
-                # print("x: ", x.shape)
-                # print("x: ", x)
+                # print("Permute code to (b, 13, 32)")
+                # print("x: ", x.shape) # torch.Size([bs*sum(l_i), nj//4=13, cb=32])
+                # print("x: ", x) # permuted binary code
 
             # Split x by length of the motion
             # print('Splitting x by length of the motion')
             x = torch.split(x, lengths.int().tolist(), dim=0)
-            # print("x: ", x[0].shape)
-            # print("x len: ", len(x))
+            # print("motion of first element: ", x[0].shape) # torch.Size([l_0, nj//4=13, cb=32])
+            assert len(x) == len(lengths), "Length of x should be equal to batch batch size"
             # print("x: ", x)
 
             # Fill with zeros to match the max length
+            # print("Filling with zeros to get the max_length and concatenate motions")
             mxs = []
             for idx, length in enumerate(lengths):
                 if length < H.max_length:
@@ -242,16 +254,28 @@ def main(H, project, namenow):
                                     torch.zeros((H.max_length - length, x[idx].shape[1], x[idx].shape[2]), device=device)],
                                 dim=0)
                 else:
-                    mx = x[idx]
+                    mx = x[idx][:H.max_length]
                 mx = mx.permute(1,2,0)
+                # print(f"motion {idx} shape", mx.shape) # torch.Size([nj//4=13, cb=32, max_length=200])
                 mxs.append(mx)
             x = torch.stack(mxs, dim=0)
+            # print("total motions shape", x.shape) # torch.Size([bs, nj//4=13, cb=32, max_length=200])
             # print("x: ", x.shape)
 
+            if H.sampler_type == 'trans':
+                # print("Permuting to fit the transformer")
+                x = x.permute(0,2,1,3).contiguous() # torch.Size([bs, cb=32, nj//4=13, max_length=200])
+                # print("permuted shape: ", x.shape)
+                b, c, nj, l = x.shape
+                # print("Merging number of joints and length")
+                x = x.view(b, c, -1).permute(0,2,1).contiguous()
+                # print("merged shape: ", x.shape) # torch.Size([bs, nj*max_length=2600, cb=32])
+
             with torch.cuda.amp.autocast(enabled=H.amp):
+                # print("SAMPLE MOTION")
                 if H.conditioned == True:
                     # print("Text conditioned")
-                    stats = sampler(x, cond['y'])
+                    stats = sampler(x, cond['y']) # go to binary_diffusion sampler
                     # print("stats: ", stats)
                 else:
                     # print("No text conditioning")
@@ -260,14 +284,17 @@ def main(H, project, namenow):
                 loss = stats['loss']
                 loss = loss / H.update_freq
 
+                # print("loss: ", loss)
+
                 run.log({"train/loss": loss.item()})
 
             if step == 0:
                 print()
-                print("Saving output for step {}".format(step))  
+                print("Saving output for step {}".format(step))                  
                 motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, x=x, lengths=lengths)
-                # print("images: ", images.shape)
+                # print("motions: ", motions.shape) # torch.Size([b*sum(l_i), 3, 52])
                 # print("images: ", images)
+                # print('save_motion')
                 save_motion(dataset_type=H.dataset_type, motion=motions.detach().cpu().numpy(), mot_name=names, desc=texts, lengths=lengths,  step=step, log_dir=H.log_dir)
                 # save to test the reconstruction quality
 
@@ -303,18 +330,20 @@ def main(H, project, namenow):
 
 
             if step % H.steps_per_save_output == 0:
+                # print("SAMPLE SAVE OUTPUT")
                 if H.conditioned:
-                    # print("CONDITIONED")
-                    label = {'lengths': lengths[0], 'text': texts[0]}
-                    # print("label: ", label)
+                    # print("CONDITIONED") # enter here
+                    label = {'lengths': lengths[0].unsqueeze(0), 'text': [texts[0]]}
+                    # print("label: ", label) # {'lengths': tensor(l_0), 'text': 'a person is walking'}
                 else:
-                    label = None
-                if H.guidance:
-                    # print("guidance")
-                    motions = get_online_motions_guidance(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
-                else:
-                    # print("no guidance")
-                    motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
+                    label = label = {'lengths': lengths[0].unsqueeze(0), 'text': [texts[0]]}
+                # if H.guidance:
+                #     # print("guidance")
+                #     motions = get_online_motions_guidance(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
+                # else:
+                #     # print("no guidance") # enter here
+                #     motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
+                motions = get_online_motions(H, mbinaryae, ema_sampler if H.ema else sampler, label=label)
                 print()
                 print("Saving output for step {}".format(step))
                 # print("motions: ", motions.shape)
@@ -355,7 +384,7 @@ if __name__ == '__main__':
     now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     # Set the name of current run
-    name = "mbld"
+    name = "mbld" + H.dataset
     namenow = name + "_" + now
 
     print("----------------------------------------")

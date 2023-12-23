@@ -165,20 +165,23 @@ def save_motion(dataset_type, motion, mot_name, step, log_dir, lengths, j2nj=Non
         21, 40, 41, 42], [21, 37, 38, 39], [21, 49, 50, 51]]
     t2m_body_hand_kinematic_chain = t2m_kinematic_chain + t2m_left_hand_chain + t2m_right_hand_chain
 
+    print("data type: ", dataset_type)
     if dataset_type == 'newjoints':
-        if motion.shape[1] != 52:
+        # print(f'motion.shape: {motion.shape}') # torch.Size([b*sum(l_i), 52, 3])
+        # if motion.shape[1] != 52:
+        #     print('motion.shape[1] != 52')
             # print(f'motion.shape: {motion.shape}')
-            motion = motion[:, body_joints_id+hand_joints_id, :]
+            # motion = motion[:, body_joints_id+hand_joints_id, :]
             # print(f'motion.shape: {motion.shape}')
         # print(f'motion.shape: {motion.shape}')
         xyz = motion.reshape(1, -1, 52, 3)
-        # print(f'xyz.shape: {xyz.shape}')
+        # print(f'motions reshape: {xyz.shape}') # torch.Size([1, b*sum(l_i), 52, 3])
         xyzs = []
         for i in range(len(lengths)):
             # print('lengths[i]: ', lengths[i])
             xyzs.append(xyz[:, :int(lengths[i].item()), :, :])
             xyz = xyz[:, int(lengths[i].item()):, :, :]
-            # print(f'xyzs[i].shape: {xyzs[i].shape}')
+            # print(f'motion {i} shape: {xyzs[i].shape}') # torch.Size([1, l_i, 52, 3])
         pose_vis = draw_to_batch_smplh(xyzs[0], t2m_body_hand_kinematic_chain, title_batch=desc, outname=mot_name, log_dir=log_dir_motion, step=step)
 
     elif dataset_type == 'smplx':

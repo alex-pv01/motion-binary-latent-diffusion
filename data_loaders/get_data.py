@@ -5,12 +5,16 @@ from torch.utils.data import DataLoader
 
 from data_loaders.tensors import collate as all_collate
 from data_loaders.motionx.data.utils import mx_collate, t2m_collate
+from data_loaders.tensors import t2m_collate as hml_collate
 
 
 def get_dataset_class(name):
     if name == 'motionx':
         from data_loaders.motionx.data.dataset import MotionX
         return MotionX
+    elif name == 'humanml':
+        from data_loaders.humanml.data.dataset import HumanML3D
+        return HumanML3D
     else:
         raise ValueError(f'Unsupported dataset name [{name}]')
 
@@ -20,21 +24,29 @@ def get_collate_fn(name, hml_mode='train'):
     #     return t2m_eval_collate
     if name == "motionx":
         return t2m_collate
+    elif name == "humanml":
+        return hml_collate
     else:
         return all_collate
 
 
 def get_dataset(name, 
-                num_frames=None, 
+                num_frames=None,
                 motions_path=None, 
                 texts_path=None, 
                 debug=True, 
-                split='train', 
-                hml_mode='train'):
+                split='val', 
+                hml_mode='val'):
     DATA = get_dataset_class(name)
     if name == "motionx":
         assert motions_path is not None and texts_path is not None, "motions_path and texts_path must be provided for MotionX dataset"
         dataset = DATA(motions_path, texts_path, debug, split=split)
+    elif name == "humanml":
+        split = 'val'
+        hml_mode = 'train'
+        # assert num_frames is not None, "num_frames must be provided for HumanML dataset"
+        # num_frames = 60
+        dataset = DATA(split=split, num_frames=num_frames, mode=hml_mode, motions_path=motions_path, texts_path=texts_path)
     else:
         dataset = DATA(split=split, num_frames=num_frames)
     return dataset

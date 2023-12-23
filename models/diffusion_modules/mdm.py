@@ -169,6 +169,9 @@ class MDM(nn.Module):
             # print('texts after pad', texts.shape, texts)
         else:
             texts = clip.tokenize(raw_text, truncate=True).to(device) # [bs, context_length] # if n_tokens > 77 -> will truncate
+        # print('texts', texts.shape)
+        aux = self.clip_model.encode_text(texts).float()
+        # print('aux', aux.shape)
         return self.clip_model.encode_text(texts).float()
 
     def forward(self, x, time_steps, label=None):
@@ -176,19 +179,22 @@ class MDM(nn.Module):
         x: [batch_size, njoints, nfeats, max_frames], denoted x_t in the paper
         timesteps: [batch_size] (int)
         """
-        # print('MDM forward')
-        # print('x', x.shape)
-        # print('time_steps', time_steps.shape)
-        # print('time_steps', time_steps)
+        print('MDM forward')
+        print('input mdm x', x.shape) # [bs, nj=13, c=32, max_length=200]
+        print('time_steps', time_steps.shape) # [bs]
+        print('time_steps', time_steps)
         bs, njoints, nfeats, nframes = x.shape
-        emb = self.embed_timestep(time_steps)  # [1, bs, d]
+        emb = self.embed_timestep(time_steps)  # [1, bs, d=512]
+        print('emb', emb.shape)
 
-        # print('label', label)
+        print('label', label)
         if label is not None:
             force_mask = label.get('uncond', False)
             if 'text' in self.cond_mode:
                 enc_text = self.encode_text(label['text'])
+                print('enc_text', enc_text.shape) # [bs, self.latent_dim=d=512]
                 emb += self.embed_text(self.mask_cond(enc_text, force_mask=force_mask))
+                print('emb', emb.shape) # [1, bs, d=512]
             if 'action' in self.cond_mode:
                 action_emb = self.embed_action(label['action'])
                 emb += self.mask_cond(action_emb, force_mask=force_mask)
@@ -204,11 +210,14 @@ class MDM(nn.Module):
 
         if self.arch == 'trans_enc':
             # adding the timestep embed
-            # print('emb', emb.shape)
-            # print('x', x.shape)
-            xseq = torch.cat((emb, x), axis=0)  # [seqlen+1, bs, d]
+            print('emb', emb.shape) # [1, bs, d]
+            print('x', x.shape) # [seqlen, bs, d]
+            xseq = torch.cat((emb, x), axis=0)  # [seqlen+1, bs, d], notice that emb goes at the beginning
+            print("xseq", xseq.shape) 
             xseq = self.sequence_pos_encoder(xseq)  # [seqlen+1, bs, d]
+            print("xseq", xseq.shape)
             output = self.seqTransEncoder(xseq)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
+            print("output", output.shape)
 
         elif self.arch == 'trans_dec':
             if self.emb_trans_dec:
@@ -290,11 +299,15 @@ class InputProcess(nn.Module):
             self.velEmbedding = nn.Linear(self.input_feats, self.latent_dim)
 
     def forward(self, x):
+        print('InputProcess forward')
         bs, njoints, nfeats, nframes = x.shape
+        print('x', x.shape)
         x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints*nfeats)
+        print('x', x.shape)
 
         if self.data_rep in ['rot6d', 'xyz', 'hml_vec']:
             x = self.poseEmbedding(x)  # [seqlen, bs, d]
+            print('x', x.shape)
             return x
         elif self.data_rep == 'rot_vel':
             first_pose = x[[0]]  # [1, bs, 150]

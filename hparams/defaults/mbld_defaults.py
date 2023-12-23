@@ -11,7 +11,7 @@ class HparamsMBLD(HparamsBase):
         self.resid_pdrop = 0.
         self.temp = 1.0
         self.weight_decay = 0.0
-        self.beta = 0.1
+        # self.beta = 0.1
         self.loss_final = 'weighted'
         self.beta_type = 'linear'
         self.epsilon = 0.0
@@ -19,11 +19,12 @@ class HparamsMBLD(HparamsBase):
         self.drop_path = 0.0
         self.p_flip = False
         self.focal = 0
-        self.aux = 0.0 # better numerical statbility
-        self.norm_first = False
+        self.aux = 0.1 # better numerical statbility
+        # self.norm_first = False
         self.use_softmax = False
-        self.use_tanh = False
+        # self.use_tanh = False
         self.update_freq = 1
+        self.alpha=-1
 
         self.load_model_step = -1
         self.load_model_dir = ''
@@ -40,23 +41,27 @@ class HparamsMBLD(HparamsBase):
         self.optim_eps = 1e-8
         self.reset_scaler = False
 
-        self.clip_version = 'ViT-B/32'
+        self.clip_version = 'ViT-B/16'
+        self.sampler_type = sampler
 
-        self.max_length = 500
         
         super().__init__(dataset, dataset_type, sampler)
         
         if sampler == "trans":
             if self.dataset.startswith("motionx"):
-                self.batch_size = 8
-                self.bert_n_emb = 256
-                self.bert_n_head = 4
-                self.bert_n_layers = 12
+                # self.batch_size = 8
+                self.bert_n_emb = 32
+                self.bert_n_head = 2
+                self.bert_n_layers = 4
                 self.block_size = 13
                 self.lr = 2e-4
-                self.warmup_iters = 10000
-                self.num_classes = 1000
+                self.warmup_iters = 100
+                # self.num_classes = 1000
+
+                self.max_length = 200
     
+                self.text_emb = 512
+                self.max_text_length = 77
             else:
                 raise KeyError(f"Defaults not defined for Bernoulli diffusion model on dataset: {self.dataset}")
             
@@ -94,6 +99,8 @@ class HparamsMBLD(HparamsBase):
                 self.cond_mask_prob = 0.1
                 self.arch = 'trans_enc'
                 self.emb_trans_dec = False
+
+                self.max_length = 200
             
             elif self.dataset_type == "smplx":
                 self.njoints = 322
@@ -111,6 +118,25 @@ class HparamsMBLD(HparamsBase):
                 self.cond_mask_prob = 0.1
                 self.arch = 'trans_enc'
                 self.emb_trans_dec = False
+            
+            elif self.dataset_type == "newjointvecs":
+                self.njoints = 16
+                # self.nfeats = 1
+
+                self.latent_dim = 128
+                self.ff_size = 256
+                self.num_layers = 8
+                self.num_heads = 4
+                self.dropout = 0.1
+                self.activation = 'gelu'
+                self.clip_dim = 512
+                self.normalize_encoder_output = False
+                self.cond_mode = 'text'
+                self.cond_mask_prob = 0.1
+                self.arch = 'trans_enc'
+                self.emb_trans_dec = False
+
+                self.max_length = 196
 
 
 
@@ -145,6 +171,7 @@ def add_mbld_args(parser):
     parser.add_argument("--grad_norm", type=float)
     parser.add_argument("--p_flip", action="store_true")
     parser.add_argument("--focal", type=float)
+    parser.add_argument("--alpha", type=float)
     parser.add_argument("--aux", type=float)
     parser.add_argument("--use_softmax", action="store_true")
     parser.add_argument("--guidance", action="store_true")
