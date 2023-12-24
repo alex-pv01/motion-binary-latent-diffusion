@@ -1,9 +1,13 @@
 import torch 
 import torch.nn as nn
 
+class NoQuantizer(nn.Module):
+    def forward(self, h, deterministic):
+        return h, torch.tensor(0.0).detach(), {"binary_code": h.detach()}, h.detach()
+
 
 class BinaryQuantizer(nn.Module):
-    def forward(self, h):
+    def forward(self, h, deterministic):
         sigma_h = torch.sigmoid(h)
         binary = torch.bernoulli(sigma_h)
         aux_binary = binary.detach() + sigma_h - sigma_h.detach()

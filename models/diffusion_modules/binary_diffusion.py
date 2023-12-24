@@ -80,75 +80,75 @@ class BinaryDiffusion(Sampler):
         return x_t
 
     def _train_loss(self, x_0, label=None, x_ct=None):
-        print('TRAIN LOSS SAMPLER')
+        # print('TRAIN LOSS SAMPLER')
         # statss = []
         # for x_0 in x_0s:
-        print("input shape: ", x_0.shape) # torch.Size([bs, 2600, 32])
-        print("input type: ", x_0.dtype) # torch.float32
+        # print("input shape: ", x_0.shape) #  if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
+        # print("input type: ", x_0.dtype) # torch.float32
         x_0 = x_0 * 1.0
-        print("input new type: ", x_0.dtype) # torch.float32
+        # print("input new type: ", x_0.dtype) # torch.float32
         b, device = x_0.size(0), x_0.device
-        print("batch size: ", b) # 8
-        print('device', device) # cuda:0
+        # print("batch size: ", b) # 8
+        # print('device', device) # cuda:0
 
         # choose what time steps to compute loss at
         # print("Sampling time steps")
         t = self.sample_time(b, device)
-        print('t shape', t.shape) # torch.Size([8])
-        print('t', t)
+        # print('t shape', t.shape) # torch.Size([8])
+        # print('t', t)
 
         # make x noisy and denoise
         if x_ct is None:
-            print("Q sampling the noisy latent at t")
+            # print("Q sampling the noisy latent at t")
             x_t = self.q_sample(x_0, t) 
-            print('x_t', x_t.shape) # torch.Size([8, 2600, 32])
+            # print('x_t', x_t.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
         else:
-            print('x_ct', x_ct.shape)
+            # print('x_ct', x_ct.shape)
             x_t = self.scheduler.sr_forward(x_0, x_ct, t)
-            print('x_t', x_t.shape)
+            # print('x_t', x_t.shape)
 
         x_t_in = torch.bernoulli(x_t)
-        print('x_t_in', x_t_in.shape) # torch.Size([8, 2600, 32]) binary tensor
+        print('x_t_in', x_t_in.shape) # binary tensor, if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
         if label is not None:
-            print('label type', type(label)) # dict
+            # print('label type', type(label)) # dict
             if self.guidance and np.random.random() < 0.1:
                 label = None
-            print('Apply denoising function') # can ve either trans or mdm (trans in this case)
+            # print('Apply denoising function') # can ve either trans or mdm (trans in this case)
             x_0_hat_logits = self._denoise_fn(x_t_in, label=label, time_steps=t-1) 
-            print('x_0_hat_logits', x_0_hat_logits.shape)
+            # print('x_0_hat_logits', x_0_hat_logits.shape)# if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
         else:
-            print('label is none')
-            print('Apply denoising function')
+            # print('label is none')
+            # print('Apply denoising function')
             x_0_hat_logits = self._denoise_fn(x_t_in, time_steps=t-1)
-            print('x_0_hat_logits', x_0_hat_logits.shape)
+            # print('x_0_hat_logits', x_0_hat_logits.shape)
 
-        print('x_0_hat_logits', x_0_hat_logits.shape) # torch.Size([8, 2600, 32])
+        # print('x_0_hat_logits', x_0_hat_logits.shape)# if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
 
         if self.p_flip:
             # print('Predicting p_flip')
             if self.focal >= 0:
                 x_0_ = torch.logical_xor(x_0, x_t_in)*1.0
-                print('x_0_', x_0_.shape) # torch.Size([8, 2600, 32])
+                # print('x_0_', x_0_.shape)# if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
                 kl_loss = focal_loss(x_0_hat_logits.clamp(min=1e-6, max=(1.0-1e-6)), x_0_.clamp(min=1e-6, max=(1.0-1e-6)), gamma=self.focal, alpha=self.alpha)
-                print('kl_loss', kl_loss.shape) # torch.Size([8, 2600, 32])
+                # print('kl_loss', kl_loss.shape)# if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
                 x_0_hat_logits = torch.sigmoid(x_0_hat_logits)
                 x_0_hat_logits = x_t_in * (1 - x_0_hat_logits) + (1 - x_t_in) * x_0_hat_logits
-                print('x_0_hat_logits', x_0_hat_logits.shape) # torch.Size([8, 2600, 32])
+                # print('x_0_hat_logits', x_0_hat_logits.shape)# if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
             else:
                 torch.sigmoid(x_0_hat_logits)
                 x_0_hat_logits = x_t_in * (1 - x_0_hat_logits) + (1 - x_t_in) * x_0_hat_logits
-                print('x_0_hat_logits', x_0_hat_logits.shape)
+                # print('x_0_hat_logits', x_0_hat_logits.shape)
                 kl_loss = F.binary_cross_entropy_with_logits(x_0_hat_logits.clamp(min=1e-6, max=(1.0-1e-6)), x_0.clamp(min=1e-6, max=(1.0-1e-6)), reduction='none')
-                print('kl_loss', kl_loss.shape)
+                # print('kl_loss', kl_loss.shape)
 
         else:
             if self.focal >= 0:
-                print()
+                # print()
                 kl_loss = focal_loss(x_0_hat_logits, x_0, gamma=self.focal, alpha=self.alpha)
-                print('kl_loss', kl_loss.shape)
+                # print('kl_loss', kl_loss.shape)
             else:
                 kl_loss = F.binary_cross_entropy_with_logits(x_0_hat_logits.clamp(min=1e-6, max=(1.0-1e-6)), x_0.clamp(min=1e-6, max=(1.0-1e-6)), reduction='none')
-                print('kl_loss', kl_loss.shape)
+                # print('kl_loss', kl_loss.shape)
 
         if torch.isinf(kl_loss).max():
             pdb.set_trace()
@@ -161,12 +161,12 @@ class BinaryDiffusion(Sampler):
         else:
             raise NotImplementedError
         
-        print('kl_loss', kl_loss.shape)
+        # print('kl_loss', kl_loss.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
         
         loss = (weight * kl_loss).mean()
         kl_loss = kl_loss.mean()
-        print('weighted kl_loss', loss)
-        print('mean kl_loss', kl_loss)
+        # print('weighted kl_loss', loss)
+        # print('mean kl_loss', kl_loss)
 
         with torch.no_grad():
             # print('Compute accuracy')
@@ -178,57 +178,56 @@ class BinaryDiffusion(Sampler):
 
             self.x_0_hat_logits = torch.sigmoid(x_0_hat_logits) # save to compute accuracy when sampling
 
-        print("self.aux", self.aux)
+        # print("self.aux", self.aux) # 0.1
 
         if self.aux > 0:
-            print('Compute aux loss')
+            # print('Compute aux loss')
             if len(x_0.shape) == 3:
-                ftr = (((t-1)==0)*1.0).view(-1, 1, 1)
+                ftr = (((t-1)==0)*1.0).view(-1, 1, 1) # torch.Size([8, 1, 1])
             elif len(x_0.shape) == 4:
-                ftr = (((t-1)==0)*1.0).view(-1, 1, 1, 1)
-            print('ftr shape', ftr.shape) # torch.Size([8, 1, 1])
-            print('ftr', ftr)
+                ftr = (((t-1)==0)*1.0).view(-1, 1, 1, 1) # torch.Size([8, 1, 1, 1])
+            # each element of the batch has a different ftr according to the time step
+            # print('ftr shape', ftr.shape) 
+            # print('ftr', ftr)
 
             x_0_l = torch.sigmoid(x_0_hat_logits)
-            x_0_l = x_0_hat_logits
-            # print('x_0_l', x_0_l.shape) # torch.Size([8, 2600, 32])
             x_0_logits = torch.cat([x_0_l.unsqueeze(-1), (1-x_0_l).unsqueeze(-1)], dim=-1)
-            print('x_0_logits', x_0_logits.shape) # torch.Size([8, 2600, 32, 2])
+            # print('x_0_logits', x_0_logits.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             x_t_logits = torch.cat([x_t_in.unsqueeze(-1), (1-x_t_in).unsqueeze(-1)], dim=-1)
-            print('x_t_logits', x_t_logits.shape) # torch.Size([8, 2600, 32, 2])
+            # print('x_t_logits', x_t_logits.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
 
             p_EV_qxtmin_x0 = self.scheduler(x_0_logits, t-1)
-            print('p_EV_qxtmin_x0', p_EV_qxtmin_x0.shape) # torch.Size([8, 2600, 32, 2])
+            # print('p_EV_qxtmin_x0', p_EV_qxtmin_x0.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
 
             q_one_step = self.scheduler.one_step(x_t_logits, t)
-            print('q_one_step', q_one_step.shape) # torch.Size([8, 2600, 32, 2])
+            # print('q_one_step', q_one_step.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             unnormed_probs = p_EV_qxtmin_x0 * q_one_step
-            print('unnormed_probs', unnormed_probs.shape) # torch.Size([8, 2600, 32, 2])
+            # print('unnormed_probs', unnormed_probs.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             unnormed_probs = unnormed_probs / (unnormed_probs.sum(-1, keepdims=True)+1e-6)
-            print('unnormed_probs', unnormed_probs.shape) # torch.Size([8, 2600, 32, 2])
+            # print('unnormed_probs', unnormed_probs.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             unnormed_probs = unnormed_probs[...,0]
-            print('unnormed_probs', unnormed_probs.shape) # torch.Size([8, 2600, 32])
+            # print('unnormed_probs', unnormed_probs.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
             
             x_tm1_logits = unnormed_probs * (1-ftr) + x_0_l * ftr
-            print('x_tm1_logits', x_tm1_logits.shape) # torch.Size([8, 2600, 32])
+            # print('x_tm1_logits', x_tm1_logits.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
             x_0_gt = torch.cat([x_0.unsqueeze(-1), (1-x_0).unsqueeze(-1)], dim=-1)
-            print('x_0_gt', x_0_gt.shape) # torch.Size([8, 2600, 32, 2])
+            # print('x_0_gt', x_0_gt.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             p_EV_qxtmin_x0_gt = self.scheduler(x_0_gt, t-1)
-            print('p_EV_qxtmin_x0_gt', p_EV_qxtmin_x0_gt.shape) # torch.Size([8, 2600, 32, 2])
+            # print('p_EV_qxtmin_x0_gt', p_EV_qxtmin_x0_gt.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             unnormed_gt = p_EV_qxtmin_x0_gt * q_one_step
-            print('unnormed_gt', unnormed_gt.shape) # torch.Size([8, 2600, 32, 2])
+            # print('unnormed_gt', unnormed_gt.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             unnormed_gt = unnormed_gt / (unnormed_gt.sum(-1, keepdims=True)+1e-6)
-            print('unnormed_gt', unnormed_gt.shape) # torch.Size([8, 2600, 32, 2])
+            # print('unnormed_gt', unnormed_gt.shape) # if mdm torch.Size([8, 13, 32, 200, 2]) if trans torch.Size([8, 2600, 32, 2])
             unnormed_gt = unnormed_gt[...,0]
-            print('unnormed_gt', unnormed_gt.shape) # torch.Size([8, 2600, 32])
+            # print('unnormed_gt', unnormed_gt.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
 
             x_tm1_gt = unnormed_gt
-            print('x_tm1_gt', x_tm1_gt.shape) # torch.Size([8, 2600, 32])
+            # print('x_tm1_gt', x_tm1_gt.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
 
             if torch.isinf(x_tm1_logits).max() or torch.isnan(x_tm1_logits).max():
                 pdb.set_trace()
             aux_loss = F.binary_cross_entropy_with_logits(x_tm1_logits.clamp(min=1e-6, max=(1.0-1e-6)), x_tm1_gt.clamp(min=0.0, max=1.0), reduction='none')
-            print('aux_loss', aux_loss.shape) # torch.Size([8, 2600, 32])
+            # print('aux_loss', aux_loss.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
 
             aux_loss = (weight * aux_loss).mean()
             loss = self.aux * aux_loss + loss
@@ -253,17 +252,17 @@ class BinaryDiffusion(Sampler):
         if length is None:
             length = self.motion_length
 
-        print('SAMPLING FORWARD')
-        print('self.shape', self.shape)
+        # print('SAMPLING FORWARD')
+        # print('self.shape', self.shape) # (1,4,13)
         #x_t = torch.bernoulli(0.5 * torch.ones((length, np.prod(self.shape), self.codebook_size), device=device))
         if self.sampler_type == "trans":
             x_t = torch.bernoulli(0.5 * torch.ones((self.shape[-1] * length, self.codebook_size), device=device)).unsqueeze(0)
         elif self.sampler_type == "mdm":
             x_t = torch.bernoulli(0.5 * torch.ones((self.shape[-1], self.codebook_size, length), device=device)).unsqueeze(0)
-        print('sampled binary from pure noise', x_t.shape)
-        print('x_t', x_t)
+        # print('sampled binary from pure noise', x_t.shape) # if mdm [1, 13, 32, 200]
+        # print('x_t', x_t) # binary tensor
         if mask is not None:
-            print('MASK')
+            # print('MASK')
             m = mask['mask'].unsqueeze(0)
             latent = mask['latent'].unsqueeze(0)
             x_t = latent * m + x_t * (1-m)
@@ -274,50 +273,32 @@ class BinaryDiffusion(Sampler):
             idx = np.array(idx * (self.num_timesteps-1), int)
             sampling_steps = sampling_steps[idx]
         
-        print('sampling_steps', sampling_steps)
+        # print('sampling_steps', sampling_steps) # [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, ..., 1000]
 
         if return_all:
             x_all = [x_t]
-
-        # if self.dataset == 'motionx':
-            # if label is None:
-            #     print('LABEL IS NONE')
-            #     label = torch.arange(100, device=device) * 100
-            #     label = label.long()
-            #     print('label', label.shape)
-            #     print('label', label)
-            #     label = None
-
-            #     text = 'no label ' * 10 
-            #     print('text', text)
-            #     label = {'lengths': length, 'text': label}
-            # else:
-            #     print('LABEL IS NOT NONE')
-            #     label = torch.full((length,), label, device=device, dtype=torch.long)
-            #     print('label', label.shape)
-            #     print('label', label)
         
         sampling_steps = sampling_steps[::-1]
 
 
         for i, t in enumerate(sampling_steps):
             # t = torch.full((length,), t, device=device, dtype=torch.long)
-            print("sampling time step", t)
+            # print("sampling time step", t)
             t = torch.tensor([t], device=device, dtype=torch.long)
             # print("hola")
-            print('time shape', t.shape)
+            # print('time shape', t.shape) # torch.Size([1])
 
             if self.dataset.startswith('motionx'):
                 # print('motionx')
-                print('t', t.shape)
-                print('x_t', x_t.shape)
-                print('t', t)
-                print("Apply denoise function")
+                # print('t', t.shape) 
+                # print('x_t', x_t.shape) # if mdm [1, 13, 32, 200]
+                # print('t', t)
+                # print("Apply denoise function")
                 x_0_logits = self._denoise_fn(x=x_t, label=label, time_steps=t-1)
-                print('x_0_logits', x_0_logits.shape)
+                # print('x_0_logits', x_0_logits.shape) # if mdm [1, 13, 32, 200]
                 # x_0_logits = x_0_logits.permute(0, 2, 1, 3)
                 x_0_logits = x_0_logits / temp
-                print('x_0_logits', x_0_logits.shape)
+                # print('x_0_logits', x_0_logits.shape) # if mdm [1, 13, 32, 200]
                 if guidance is not None:
                     # print("Apply guidance")
                     x_0_logits_uncond = self._denoise_fn(x=x_t, label=None, time_steps=t-1)
@@ -330,57 +311,63 @@ class BinaryDiffusion(Sampler):
                 # scale by temperature
 
             x_0_logits = torch.sigmoid(x_0_logits)
-            print('Bernoulli on x_0_logits', x_0_logits.shape)
+            # print('Bernoulli on x_0_logits', x_0_logits.shape) # if mdm [1, 13, 32, 200]
 
 
             if self.p_flip:
-                print('p_flip')
+                # print('p_flip')
                 x_0_logits =  x_t * (1 - x_0_logits) + (1 - x_t) * x_0_logits
-                print('x_0_logits', x_0_logits.shape)
-                print('x_t', x_t.shape)
+                # print('x_0_logits', x_0_logits.shape) # if mdm [1, 13, 32, 200]
+                # print('x_t', x_t.shape) # if mdm [1, 13, 32, 200]
                 x_0_logits =  x_t * (1 - x_0_logits) + (1 - x_t) * x_0_logits
 
                 # x_0_logits = torch.sigmoid(x_0_logits)
                 # print('x_0_logits', x_0_logits.shape)
 
             if not t[0].item() == 1:
-                t_p = torch.tensor(sampling_steps[i+1], device=device, dtype=torch.long)
-                print('t_p', t_p.shape)
+                # print('sampling_steps[i+1]', sampling_steps[i+1]) # 999
+                # print('sampling_steps[i]', sampling_steps[i]) # 1000
+                # print('t', t)
+                # print('t', t[0].item()) # 1000
+                t_p = torch.tensor([sampling_steps[i+1]], device=device, dtype=torch.long)
+                # print('t_p', t_p.shape)
+                # print('t_p', t_p)
+                # print('t_p', t_p[0].item()) # 999
 
                 x_0_logits = torch.cat([x_0_logits.unsqueeze(-1), (1-x_0_logits).unsqueeze(-1)], dim=-1)
-                print('x_0_logits', x_0_logits.shape)
+                # print('x_0_logits', x_0_logits.shape) # if mdm [1, 13, 32, 200, 2]
                 x_t_logits = torch.cat([x_t.unsqueeze(-1), (1-x_t).unsqueeze(-1)], dim=-1)
-                print('x_t_logits', x_t_logits.shape)
+                # print('x_t_logits', x_t_logits.shape) # if mdm [1, 13, 32, 200, 2]
 
 
                 p_EV_qxtmin_x0 = self.scheduler(x_0_logits, t_p)
-                print('p_EV_qxtmin_x0', p_EV_qxtmin_x0.shape)
+                # print('p_EV_qxtmin_x0', p_EV_qxtmin_x0.shape) # if mdm [1, 13, 32, 200, 2]
                 q_one_step = x_t_logits
-                print('q_one_step', q_one_step.shape)
+                # print('q_one_step', q_one_step.shape) # if mdm [1, 13, 32, 200, 2]
 
                 for mns in range(sampling_steps[i] - sampling_steps[i+1]):
-                    print('mns', mns)
+                    # print('mns', mns) # do as many steps as the difference between t and t_p
                     q_one_step = self.scheduler.one_step(q_one_step, t - mns)
-                    print('q_one_step', q_one_step.shape)
+                    # print('q_one_step', q_one_step.shape) # if mdm [1, 13, 32, 200, 2]
 
                 unnormed_probs = p_EV_qxtmin_x0 * q_one_step
-                print('unnormed_probs', unnormed_probs.shape)
+                # print('unnormed_probs', unnormed_probs.shape)  # if mdm [1, 13, 32, 200, 2]
                 unnormed_probs = unnormed_probs / unnormed_probs.sum(-1, keepdims=True)
-                print('unnormed_probs', unnormed_probs.shape)
+                # print('unnormed_probs', unnormed_probs.shape)  # if mdm [1, 13, 32, 200, 2]
                 unnormed_probs = unnormed_probs[...,0]
-                print('unnormed_probs', unnormed_probs.shape)
+                # print('unnormed_probs', unnormed_probs.shape)  # if mdm [1, 13, 32, 200]
                 
                 x_tm1_logits = unnormed_probs
-                print('x_tm1_logits', x_tm1_logits.shape)
+                # print('x_tm1_logits', x_tm1_logits.shape)
                 x_tm1_p = torch.bernoulli(x_tm1_logits)
-                print('x_tm1_p', x_tm1_p.shape)
+                # print('x_tm1_p', x_tm1_p.shape)
             
             else:
-                print('t == 1')
+                # print('t == 1')
                 x_0_logits = x_0_logits
                 x_tm1_p = torch.bernoulli(x_0_logits)
                 # x_tm1_p = (x_0_logits > 0.5) * 1.0
-                print('x_tm1_p', x_tm1_p.shape)
+                # print('x_tm1_p', x_tm1_p.shape) # if mdm [1, 13, 32, 200]
 
             x_t = x_tm1_p
 
@@ -393,12 +380,12 @@ class BinaryDiffusion(Sampler):
             #     print('acc', acc.item()) # tensor(0.5000)
 
             if mask is not None:
-                print('MASK')
+                # print('MASK')
                 m = mask['mask'].unsqueeze(0)
                 latent = mask['latent'].unsqueeze(0)
                 x_t = latent * m + x_t * (1-m)
 
-            print('x_t', x_t.shape)
+            # print('x_t', x_t.shape) # if mdm [1, 13, 32, 200]
 
 
             if return_all:
@@ -412,7 +399,7 @@ class BinaryDiffusion(Sampler):
             return x_t
     
     def forward(self, x, label=None, x_t=None):
-        print('FORWARD SAMPLER')
+        # print('FORWARD SAMPLER')
         return self._train_loss(x, label, x_t)
 
 
@@ -522,19 +509,19 @@ class noise_scheduler(nn.Module):
     
 
 def focal_loss(inputs, targets, alpha=-1, gamma=1):
-    print('FOCAL LOSS')
-    print('inputs', inputs.shape) # torch.Size([8, 2600, 32])
-    print('targets', targets.shape) # torch.Size([8, 2600, 32])
+    # print('FOCAL LOSS')
+    # print('inputs', inputs.shape) # torch.Size([8, 2600, 32])
+    # print('targets', targets.shape) # torch.Size([8, 2600, 32])
     p = torch.sigmoid(inputs)
     ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    print('ce_loss', ce_loss.shape) # torch.Size([8, 2600, 32])
+    # print('ce_loss', ce_loss.shape) # torch.Size([8, 2600, 32])
     p_t = p * targets + (1 - p) * (1 - targets)
-    print('p_t', p_t.shape) # torch.Size([8, 2600, 32])
+    # print('p_t', p_t.shape) # torch.Size([8, 2600, 32])
     p_t = (1 - p_t)
-    print('1 - p_t', p_t.shape) # torch.Size([8, 2600, 32])
+    # print('1 - p_t', p_t.shape) # torch.Size([8, 2600, 32])
     p_t = p_t.clamp(min=1e-6, max=(1-1e-6)) # numerical safety
     loss = ce_loss * (p_t ** gamma)
-    print('loss', loss.shape) # torch.Size([8, 2600, 32])
+    # print('loss', loss.shape) # torch.Size([8, 2600, 32])
     if alpha == -1:
         if len(targets.shape) == 3:
             neg_weight = targets.sum((-1, -2)) 
@@ -542,22 +529,22 @@ def focal_loss(inputs, targets, alpha=-1, gamma=1):
             neg_weight = targets.sum((-1, -2, -3))
         else: 
             raise NotImplementedError
-        print('neg_weight', neg_weight.shape) # torch.Size([8])
+        # print('neg_weight', neg_weight.shape) # torch.Size([8])
         neg_weight = neg_weight / targets[0].numel()
-        print('neg_weight', neg_weight.shape) # torch.Size([8])
+        # print('neg_weight', neg_weight.shape) # torch.Size([8])
         if len(targets.shape) == 3:
             neg_weight = neg_weight.view(-1, 1, 1)
         elif len(targets.shape) == 4:  
             neg_weight = neg_weight.view(-1, 1, 1, 1)
-        print('neg_weight', neg_weight.shape) # torch.Size([8, 1, 1])
+        # print('neg_weight', neg_weight.shape) # torch.Size([8, 1, 1])
         alpha_t = (1 - neg_weight) * targets + neg_weight * (1 - targets)
-        print('alpha_t', alpha_t.shape) # torch.Size([8, 2600, 32])
+        # print('alpha_t', alpha_t.shape) # torch.Size([8, 2600, 32])
         loss = alpha_t * loss
     elif alpha > 0:
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
-        print('alpha_t', alpha_t.shape)
+        # print('alpha_t', alpha_t.shape)
         loss = alpha_t * loss
-    print('loss', loss.shape) # torch.Size([8, 2600, 32])
+    # print('loss', loss.shape) # torch.Size([8, 2600, 32])
     return loss
 
 

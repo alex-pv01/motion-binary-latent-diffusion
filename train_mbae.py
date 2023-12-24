@@ -12,11 +12,15 @@ from tqdm import tqdm
 
 from models.encoding.mbae import MotionBinaryAutoEncoder
 from models.encoding.utils import load_mbinaryae_from_checkpoint
-from models.log_utils import log, log_stats, save_model, save_stats, config_log, start_training_log, save_motion
+from models.log_utils import log, log_stats, save_model, save_stats, config_log, start_training_log, save_motion, save_motion_humanml
 from data_loaders.get_data import DataModule
 from train.utils import EMA
 
 from hparams import get_mbae_hparams
+
+from models.rot2xyz import Rotation2xyz
+
+from models.encoding.mld_vae import MldVae
 
 import wandb
 
@@ -52,7 +56,10 @@ def main(args, project, namenow):
     print("Device: {}".format(device))
 
     # Initialize the model at device
-    mbinaryae = MotionBinaryAutoEncoder(args).cuda(device)
+    if args.ae_type == 'mbae':
+        mbinaryae = MotionBinaryAutoEncoder(args).cuda(device)
+    elif args.ae_type == 'mld':
+        mbinaryae = MldVae(args).cuda(device)
 
     # Initialize the data module
     data_module = DataModule(batch_size=args.batch_size,
@@ -98,6 +105,10 @@ def main(args, project, namenow):
     start_step = 0
     log_start_step = 0
     eval_start_step = args.steps_per_eval
+
+    # Load the rot2xyz converter
+    if args.dataset == 'humanml':
+        rot2xyz = Rotation2xyz(device, dataset='humanml')
 
     # Load from checkpoint if specified
     if args.load_step > 0:
@@ -224,30 +235,54 @@ def main(args, project, namenow):
                 print("Saving output for step {}".format(step))  
                 if args.ema:
                     x_hat, _, x_input = ema_mbinaryae.training_step(motion, device, return_input=return_input, lengths=lengths)
-                save_motion(dataset_type=args.dataset_type, 
-                            motion=x_hat.permute(0,2,1).detach().cpu().numpy(), 
-                            lengths=lengths, 
-                            mot_name=cond['y']['name'], 
-                            desc=cond['y']['text'],  
-                            step=step, 
-                            j2nj=j2nj_converter,
-                            s2j=s2j_converter,
-                            log_dir=args.log_dir,
-                            device=device)         
-                if return_input:
-                    print("Saving input for step {}".format(step))
+
+                if args.dataset == 'motionx':    
                     save_motion(dataset_type=args.dataset_type, 
-                                motion=x_input.permute(0,2,1).detach().cpu().numpy(), 
-                                name='input', 
-                                lengths=lengths,
+                                motion=x_hat.permute(0,2,1).detach().cpu().numpy(), 
+                                lengths=lengths, 
                                 mot_name=cond['y']['name'], 
                                 desc=cond['y']['text'],  
                                 step=step, 
-                                log_dir=args.log_dir,
                                 j2nj=j2nj_converter,
                                 s2j=s2j_converter,
-                                device=device)
-        
+                                log_dir=args.log_dir,
+                                device=device) 
+                elif args.dataset == 'humanml':
+                    save_motion_humanml(data=data_module.dataset,
+                                        motion=x_hat.detach().cpu().numpy(),
+                                        mot_name=cond['y']['name'],
+                                        desc=cond['y']['text'],
+                                        lengths=lengths,
+                                        mask=cond['y']['mask'],
+                                        step=step, 
+                                        log_dir=args.log_dir,
+                                        rot2xyz=rot2xyz)
+                if return_input:
+                    print("Saving input for step {}".format(step))
+                    if args.dataset == 'motionx':
+                        save_motion(dataset_type=args.dataset_type, 
+                                    motion=x_input.permute(0,2,1).detach().cpu().numpy(), 
+                                    name='input', 
+                                    lengths=lengths,
+                                    mot_name=cond['y']['name'], 
+                                    desc=cond['y']['text'],  
+                                    step=step, 
+                                    log_dir=args.log_dir,
+                                    j2nj=j2nj_converter,
+                                    s2j=s2j_converter,
+                                    device=device)
+                    elif args.dataset == 'humanml':
+                        save_motion_humanml(data=data_module.dataset,
+                                            motion=x_input.detach().cpu().numpy(),
+                                            mot_name=cond['y']['name'],
+                                            desc=cond['y']['text'],
+                                            lengths=lengths,
+                                            mask=cond['y']['mask'],
+                                            step=step, 
+                                            log_dir=args.log_dir,
+                                            rot2xyz=rot2xyz,
+                                            name='input')
+            
             if step % args.steps_per_checkpoint == 0 and step > args.load_step:
 
                 save_model(mbinaryae, 'mbinaryae', step, args.log_dir)
@@ -280,7 +315,7 @@ if __name__ == '__main__':
     now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     # Set the name of current run
-    name = "mbvae" + "_" + args.dataset
+    name = args.quantizer_type + "_" + "mbvae" + "_" + args.dataset
     namenow = name + "_" + now
 
     print("----------------------------------------")

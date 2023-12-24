@@ -13,22 +13,22 @@ class MDM(nn.Module):
     #              arch='trans_enc', emb_trans_dec=False, clip_version=None, **kargs):
     def __init__(self, H):
         super().__init__()
-        print('MDM init')
+        # print('MDM init')
 
         # self.legacy = H.legacy
         # print('legacy', self.legacy)
         # self.modeltype = H.modeltype
         # print('modeltype', self.modeltype)
         self.njoints = H.njoints
-        print('njoints', self.njoints)
+        # print('njoints', self.njoints)
         self.nfeats = H.codebook_size
-        print('nfeats', self.nfeats)
+        # print('nfeats', self.nfeats)
         self.num_actions = H.num_actions
-        print('num_actions', self.num_actions)
+        # print('num_actions', self.num_actions)
         self.data_rep = H.data_rep
-        print('data_rep', self.data_rep)
+        # print('data_rep', self.data_rep)
         self.dataset = H.dataset
-        print('dataset', self.dataset)
+        # print('dataset', self.dataset)
 
         # self.pose_rep = H.pose_rep
         # print('pose_rep', self.pose_rep)
@@ -40,50 +40,50 @@ class MDM(nn.Module):
         # print('translation', self.translation)
 
         self.latent_dim = H.latent_dim
-        print('latent_dim', self.latent_dim)
+        # print('latent_dim', self.latent_dim)
 
         self.ff_size = H.ff_size
-        print('ff_size', self.ff_size)
+        # print('ff_size', self.ff_size)
         self.num_layers = H.num_layers
-        print('num_layers', self.num_layers)
+        # print('num_layers', self.num_layers)
         self.num_heads = H.num_heads
-        print('num_heads', self.num_heads)
+        # print('num_heads', self.num_heads)
         self.dropout = H.dropout
-        print('dropout', self.dropout)
+        # print('dropout', self.dropout)
 
         self.ablation = H.ablation
-        print('ablation', self.ablation)
+        # print('ablation', self.ablation)
         self.activation = H.activation
-        print('activation', self.activation)
+        # print('activation', self.activation)
         self.clip_dim = H.clip_dim
-        print('clip_dim', self.clip_dim)
+        # print('clip_dim', self.clip_dim)
         self.action_emb = H.action_emb
-        print('action_emb', self.action_emb)
+        # print('action_emb', self.action_emb)
 
         self.input_feats = self.njoints * self.nfeats
-        print('input_feats', self.input_feats)
+        # print('input_feats', self.input_feats)
 
         self.normalize_output = H.normalize_encoder_output
-        print('normalize_output', self.normalize_output)
+        # print('normalize_output', self.normalize_output)
 
         self.cond_mode = H.cond_mode
-        print('cond_mode', self.cond_mode)
+        # print('cond_mode', self.cond_mode)
         self.cond_mask_prob = H.cond_mask_prob
-        print('cond_mask_prob', self.cond_mask_prob)
+        # print('cond_mask_prob', self.cond_mask_prob)
         self.arch = H.arch
-        print('arch', self.arch)
+        # print('arch', self.arch)
         self.gru_emb_dim = self.latent_dim if self.arch == 'gru' else 0
-        print('gru_emb_dim', self.gru_emb_dim)
+        # print('gru_emb_dim', self.gru_emb_dim)
         self.input_process = InputProcess(self.data_rep, self.input_feats+self.gru_emb_dim, self.latent_dim)
-        print('input_process', self.input_process)
+        # print('input_process', self.input_process)
 
         self.sequence_pos_encoder = PositionalEncoding(self.latent_dim, self.dropout)
-        print('sequence_pos_encoder', self.sequence_pos_encoder)
+        # print('sequence_pos_encoder', self.sequence_pos_encoder)
         self.emb_trans_dec = H.emb_trans_dec
-        print('emb_trans_dec', self.emb_trans_dec)
+        # print('emb_trans_dec', self.emb_trans_dec)
 
         if self.arch == 'trans_enc':
-            print("TRANS_ENC init")
+            # print("TRANS_ENC init")
             seqTransEncoderLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
                                                               nhead=self.num_heads,
                                                               dim_feedforward=self.ff_size,
@@ -93,7 +93,7 @@ class MDM(nn.Module):
             self.seqTransEncoder = nn.TransformerEncoder(seqTransEncoderLayer,
                                                          num_layers=self.num_layers)
         elif self.arch == 'trans_dec':
-            print("TRANS_DEC init")
+            # print("TRANS_DEC init")
             seqTransDecoderLayer = nn.TransformerDecoderLayer(d_model=self.latent_dim,
                                                               nhead=self.num_heads,
                                                               dim_feedforward=self.ff_size,
@@ -102,28 +102,28 @@ class MDM(nn.Module):
             self.seqTransDecoder = nn.TransformerDecoder(seqTransDecoderLayer,
                                                          num_layers=self.num_layers)
         elif self.arch == 'gru':
-            print("GRU init")
+            # print("GRU init")
             self.gru = nn.GRU(self.latent_dim, self.latent_dim, num_layers=self.num_layers, batch_first=True)
         else:
             raise ValueError('Please choose correct architecture [trans_enc, trans_dec, gru]')
 
         self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
-        print('embed_timestep', self.embed_timestep)
+        # print('embed_timestep', self.embed_timestep)
 
         if self.cond_mode != 'no_cond':
             if 'text' in self.cond_mode:
                 self.embed_text = nn.Linear(self.clip_dim, self.latent_dim)
-                print('EMBED TEXT')
-                print('Loading CLIP...')
+                # print('EMBED TEXT')
+                # print('Loading CLIP...')
                 self.clip_version = H.clip_version
                 self.clip_model = self.load_and_freeze_clip(H.clip_version)
             if 'action' in self.cond_mode:
                 self.embed_action = EmbedAction(self.num_actions, self.latent_dim)
-                print('EMBED ACTION')
+                # print('EMBED ACTION')
 
         self.output_process = OutputProcess(self.data_rep, self.input_feats, self.latent_dim, self.njoints,
                                             self.nfeats)
-        print('output_process', self.output_process)
+        # print('output_process', self.output_process)
         
         # self.rot2xyz = Rotation2xyz(device='cpu', dataset=self.dataset)
         # print('rot2xyz', self.rot2xyz)
@@ -179,15 +179,15 @@ class MDM(nn.Module):
         x: [batch_size, njoints, nfeats, max_frames], denoted x_t in the paper
         timesteps: [batch_size] (int)
         """
-        print('MDM forward')
-        print('input mdm x', x.shape) # [bs, nj=13, c=32, max_length=200]
-        print('time_steps', time_steps.shape) # [bs]
-        print('time_steps', time_steps)
+        # # print('MDM forward')
+        # # print('input mdm x', x.shape) # [bs, nj=13, c=32, max_length=200]
+        # # print('time_steps', time_steps.shape) # [bs]
+        # # print('time_steps', time_steps)
         bs, njoints, nfeats, nframes = x.shape
         emb = self.embed_timestep(time_steps)  # [1, bs, d=512]
-        print('emb', emb.shape)
+        # # print('emb', emb.shape)
 
-        print('label', label)
+        # # print('label', label)
         if label is not None:
             force_mask = label.get('uncond', False)
             if 'text' in self.cond_mode:
@@ -210,14 +210,14 @@ class MDM(nn.Module):
 
         if self.arch == 'trans_enc':
             # adding the timestep embed
-            print('emb', emb.shape) # [1, bs, d]
-            print('x', x.shape) # [seqlen, bs, d]
+            # # print('emb', emb.shape) # [1, bs, d]
+            # # print('x', x.shape) # [seqlen, bs, d]
             xseq = torch.cat((emb, x), axis=0)  # [seqlen+1, bs, d], notice that emb goes at the beginning
-            print("xseq", xseq.shape) 
+            # # print("xseq", xseq.shape) 
             xseq = self.sequence_pos_encoder(xseq)  # [seqlen+1, bs, d]
-            print("xseq", xseq.shape)
+            # # print("xseq", xseq.shape)
             output = self.seqTransEncoder(xseq)[1:]  # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
-            print("output", output.shape)
+            # # print("output", output.shape)
 
         elif self.arch == 'trans_dec':
             if self.emb_trans_dec:
@@ -235,7 +235,7 @@ class MDM(nn.Module):
             output, _ = self.gru(xseq)
 
         output = self.output_process(output)  # [bs, njoints, nfeats, nframes]
-        # print('output', output.shape)
+        # # print('output', output.shape)
         return output
 
 
@@ -301,12 +301,12 @@ class InputProcess(nn.Module):
     def forward(self, x):
         print('InputProcess forward')
         bs, njoints, nfeats, nframes = x.shape
-        print('x', x.shape)
+        # # print('x', x.shape) # [bs, nj=13, c=32, max_length=200]
         x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints*nfeats)
-        print('x', x.shape)
+        # # print('x', x.shape) # [200, bs, 416]
 
         if self.data_rep in ['rot6d', 'xyz', 'hml_vec']:
-            x = self.poseEmbedding(x)  # [seqlen, bs, d]
+            x = self.poseEmbedding(x)  # [seqlen, bs, d=512]
             print('x', x.shape)
             return x
         elif self.data_rep == 'rot_vel':

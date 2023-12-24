@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.encoding.modules.encoder import Encoder, Generator
-from models.encoding.modules.quantizer import BinaryVectorQuantizer
+from models.encoding.modules.quantizer import BinaryVectorQuantizer, BinaryQuantizer, NoQuantizer
 from models.encoding.modules.losses import MSELoss, L1Loss
 
 class MotionBinaryAutoEncoder(nn.Module):
@@ -36,7 +36,16 @@ class MotionBinaryAutoEncoder(nn.Module):
             self.resolution,
             self.attn_resolutions
         )
-        self.quantize = BinaryVectorQuantizer(self.codebook_size, self.embed_dim, self.embed_dim, use_tanh=H.use_tanh)
+
+        self.quantizer_type = H.quantizer_type
+        
+        if self.quantizer_type == "binary":
+            self.quantize = BinaryQuantizer()
+        elif self.quantizer_type == "binaryvq":
+            self.quantize = BinaryVectorQuantizer(self.codebook_size, self.embed_dim, self.embed_dim, use_tanh=H.use_tanh)
+        else:
+            self.quantize = NoQuantizer()
+
         self.generator = Generator(H)
         self.mseloss = MSELoss()
         self.l1loss = L1Loss()

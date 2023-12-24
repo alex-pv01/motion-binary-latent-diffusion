@@ -10,14 +10,14 @@ from tqdm import tqdm
 from models.encoding.mbae import MotionBinaryAutoEncoder
 from models.encoding.modules.encoder import Generator
 from models.log_utils import log, log_stats, config_log, start_training_log, \
-    save_stats, load_stats, save_model, load_model, save_motion, \
+    save_stats, load_stats, save_model, load_model, save_motion, save_motion_humanml, \
     MovingAverage
 from data_loaders.get_data import DataModule
 from train.utils import EMA, NativeScalerWithGradNormCount
 from train.lr_sched import adjust_lr, lr_scheduler
 
 from models.diffusion_modules.utils import retrieve_mbae_components_state_dicts,\
-    get_mbld, get_online_motions, get_online_motions_guidance
+    get_mbld, get_online_motions
 
 from hparams import get_mbld_hparams
 
@@ -295,7 +295,11 @@ def main(H, project, namenow):
                 # print("motions: ", motions.shape) # torch.Size([b*sum(l_i), 3, 52])
                 # print("images: ", images)
                 # print('save_motion')
-                save_motion(dataset_type=H.dataset_type, motion=motions.detach().cpu().numpy(), mot_name=names, desc=texts, lengths=lengths,  step=step, log_dir=H.log_dir)
+                if H.dataset == 'motionx':
+                    save_motion(dataset_type=H.dataset_type, motion=motions.detach().cpu().numpy(), mot_name=names, desc=texts, lengths=lengths,  step=step, log_dir=H.log_dir)
+                elif H.dataset == 'humanml':
+                    save_motion_humanml(motion=motions.detach().cpu().numpy(), mot_name=names, desc=texts, lengths=lengths,  step=step, log_dir=H.log_dir)
+
                 # save to test the reconstruction quality
 
             grad_norm = scaler(loss, optim, clip_grad=H.grad_norm,

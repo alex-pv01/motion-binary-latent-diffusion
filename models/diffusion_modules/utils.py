@@ -257,12 +257,12 @@ def get_t2i_samples_guidance_test(H, generator, sampler, label, x=None, g=None, 
 
 @torch.no_grad()
 def get_online_motions(H, generator, sampler, x=None, lengths=None, label=None):
-    print('GET ONLINE MOTIONS')
+    # print('GET ONLINE MOTIONS')
 
     if x is None:
         # latents_all = []
         sampler.eval()
-        print('SAMPLING')
+        # print('SAMPLING')
         # for t in np.linspace(0.55, 1.0, num=2):
         t = np.random.uniform(0.55, 1.0)
         if H.conditioned:
@@ -277,51 +277,21 @@ def get_online_motions(H, generator, sampler, x=None, lengths=None, label=None):
             # print('latents', latents.shape)
         #     latents_all.append(latents)
         # latents = torch.cat(latents_all, dim=1)
-        print('latents', latents.shape) # torch.Size([bs, 2600, 32])
+        # print('latents', latents.shape) # if mdm torch.Size([1, 13, 32, 200]) if trans torch.Size([1, 2600, 32])
         
         lengths = label['lengths']
 
         # latents = generator.get_input(latents, lengths=[latents.shape[-1]])
         sampler.train()
-        print('Sampling done')
+        # print('Sampling done')
 
     else:
-        print('LATENTS GIVEN')
+        # print('LATENTS GIVEN')
         latents = x
     
-    print('latents', latents.shape) # torch.Size([bs, 2600, 32])
+    print('latents', latents.shape) # if mdm torch.Size([bs, 13, 32, 200]) if trans torch.Size([bs, 2600, 32])
 
     with torch.cuda.amp.autocast():
-        latents_one_hot = latent_ids_to_onehot(latents, H.latent_shape, H.codebook_size)
-        # print('latents', latents.shape)
-        # size = min(5, latents.shape[0])
-        # print('size', size)
-        # motions = []
-        # for i in range(len(latents)//size):
-        #     latent = latents[i*size : (i+1)*size]
-        #     print('latent', latent.shape)
-        #     # print('latent', latent)
-        #     latent = (latent * 1.0) 
-        #     # print('latent', latent)
-
-        #     if H.use_tanh:
-        #         latent = (latent - 0.5) * 2.0
-
-        #     if not H.norm_first:
-        #         latent = latent / float(H.codebook_size)
-
-        #     latent = latent.permute(0,2,1)
-        #     print('latent', latent.shape)
-        #     latent = latent.reshape(*latent.shape[:-1], H.latent_shape[2])
-        #     print('latent', latent.shape)
-        #     mot, _, _ = generator(None, code=latent.float())
-        #     print('mot', mot.shape)
-        #     motions.append(mot)
-        # motions = torch.cat(motions, 0)
-        # print('latents', latents.shape)
-        # print('motions', motions.shape)
-
-        # print('x shape', latents.shape)
         if H.sampler_type == 'trans':
             # print("Permute to fit generator input")
             # raise NotImplementedError
@@ -331,22 +301,22 @@ def get_online_motions(H, generator, sampler, x=None, lengths=None, label=None):
             # print("reshaped latents", latents.shape) # torch.Size([bs, 32, 13, 200])
         elif H.sampler_type == 'mdm':
             latents = latents.permute(0,2,1,3)
-            print('permuted latents', latents.shape)
-        print('get input')
+            # print('permuted latents', latents.shape) # torch.Size([bs, 32, 13, 200])
+        # print('get input')
         latents = generator.get_input(latents, lengths)
-        print('latents', latents.shape) # torch.Size([bs*sum(l_i), 32, 13])
+        # print('latents', latents.shape) # torch.Size([bs*sum(l_i), 32, 13])
 
         latents = latents * 1.0
         if H.use_tanh:
             latents = (latents - 0.5) * 2.0
         if not H.norm_first:
             latents = latents / float(H.codebook_size)
-        print('normalized latents', latents.shape) # torch.Size([bs*sum(l_i), 32, 13])
-        print("Generate motions")
+        # print('normalized latents', latents.shape) # torch.Size([bs*sum(l_i), 32, 13])
+        # print("Generate motions")
         motions, _, _, _ = generator(None, code=latents.float())
-        print('motions generated shape', motions.shape)
+        # print('motions generated shape', motions.shape) # torch.Size([bs*sum(l_i), 3, 52])
         motions = motions.permute(0,2,1)
-        print('permuted motions', motions.shape)       
+        # print('permuted motions', motions.shape) # torch.Size([bs*sum(l_i), 52, 3])
 
     return motions
 

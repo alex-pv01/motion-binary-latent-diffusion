@@ -69,7 +69,7 @@ def get_dataset_loader(name,
         num_workers=8, drop_last=True, collate_fn=collate
     )
 
-    return loader
+    return loader, dataset
 
 
 class DataModule(object):
@@ -93,6 +93,7 @@ class DataModule(object):
         self.train = train
         self.val = val
         self.test = test
+        self.dataset = None
         if train:
             self.train_dataloader = self._train_dataloader
         else: 
@@ -108,26 +109,35 @@ class DataModule(object):
         self.debug = debug
     
     def _train_dataloader(self):
-        return get_dataset_loader(name=self.name,
+        loader, dataset = get_dataset_loader(name=self.name,
                                   batch_size=self.batch_size,
                                   motions_path=self.motions_path,
                                   texts_path=self.texts_path,
                                   debug=self.debug,
                                   split='train',
                                   )
+        if self.dataset is None:
+            self.dataset = dataset
+        return loader
     def _val_dataloader(self):
-        return get_dataset_loader(name=self.name,
+        loader, dataset = get_dataset_loader(name=self.name,
                                   batch_size=self.batch_size//2,
                                   motions_path=self.motions_path,
                                   texts_path=self.texts_path,
                                   debug=self.debug,
                                   split='val',
                                   )
+        if self.dataset is None:
+            self.dataset = dataset
+        return loader
     def _test_dataloader(self):
-        return get_dataset_loader(name=self.name,
+        loader, dataset = get_dataset_loader(name=self.name,
                                   batch_size=self.batch_size//2,
                                   motions_path=self.motions_path,
                                   texts_path=self.texts_path,
                                   debug=self.debug,
                                   split='test',
                                   )
+        if self.dataset is None:
+            self.dataset = dataset
+        return loader

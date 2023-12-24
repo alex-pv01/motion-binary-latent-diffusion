@@ -9,6 +9,10 @@ import pdb
 
 from visualize.tomato_representation.plot_3d_global import draw_to_batch_smplh
 
+from data_loaders.humanml.scripts.motion_process import recover_from_ric
+import data_loaders.humanml.utils.paramUtil as paramUtil
+from data_loaders.humanml.utils.plot_script import plot_3d_motion
+
 
 class MovingAverage(object):
     def __init__(self, length):
@@ -167,13 +171,6 @@ def save_motion(dataset_type, motion, mot_name, step, log_dir, lengths, j2nj=Non
 
     print("data type: ", dataset_type)
     if dataset_type == 'newjoints':
-        # print(f'motion.shape: {motion.shape}') # torch.Size([b*sum(l_i), 52, 3])
-        # if motion.shape[1] != 52:
-        #     print('motion.shape[1] != 52')
-            # print(f'motion.shape: {motion.shape}')
-            # motion = motion[:, body_joints_id+hand_joints_id, :]
-            # print(f'motion.shape: {motion.shape}')
-        # print(f'motion.shape: {motion.shape}')
         xyz = motion.reshape(1, -1, 52, 3)
         # print(f'motions reshape: {xyz.shape}') # torch.Size([1, b*sum(l_i), 52, 3])
         xyzs = []
@@ -214,6 +211,73 @@ def save_motion(dataset_type, motion, mot_name, step, log_dir, lengths, j2nj=Non
         # Create 3D motion representation
         print("Creating 3D motion representation...")
         pose_vis = draw_to_batch_smplh([newjoint], t2m_body_hand_kinematic_chain, title_batch=desc, outname=mot_name, log_dir=log_dir_motion, step=step)
+
+
+
+def save_motion_humanml(data, motion, mot_name, step, log_dir, lengths, mask, name='motion', desc=None, device=None, rot2xyz=None):
+    print("Saving humanml motion...")
+    log_dir_motion = os.path.join(log_dir, name)
+    os.makedirs(log_dir_motion, exist_ok=True)
+
+    # print(f'lengths: {lengths}')
+    # print(f'mot_name: {mot_name}')
+    # print(f'step: {step}')
+    # print(f'desc: {desc}')
+
+
+    xyz = motion.reshape(1, -1, 1, 263)
+    # print(f'motions reshape: {xyz.shape}') # torch.Size([1, b*sum(l_i), 52, 3])
+    xyzs = []
+    for i in range(len(lengths)):
+        # print('lengths[i]: ', lengths[i])
+        xyzs.append(xyz[:, :int(lengths[i].item()), :, :])
+        xyz = xyz[:, int(lengths[i].item()):, :, :]
+        # print(f'motion {i} shape: {xyzs[i].shape}') # torch.Size([1, l_i, 52, 3])
+
+    # Visualize the first motion
+        
+    # Preprocess the motion
+    sample = torch.tensor(xyzs[0])
+    mask = mask[0].reshape(1, 196).bool()
+    length = lengths[0].item()
+
+    # Fill zeros for the missing frames in dimension 1 until reaching 196
+    if sample.shape[1] < 196:
+        sample = torch.cat((sample, torch.zeros((1, 196 - sample.shape[1], 1, sample.shape[-1]))), dim=1)
+    # print(f'sample.shape: {sample.shape}')
+
+    # print('mask.shape: ', mask.shape)
+
+    n_joints = 22 if sample.shape[-1] == 263 else 21
+    sample = data.t2m_dataset.inv_transform(sample.cpu().permute(0, 2, 1, 3)).float()
+    # print(f'sample.shape: {sample.shape}')
+    sample = recover_from_ric(sample, n_joints)
+    # print(f'sample.shape: {sample.shape}')
+    sample = sample.view(-1, *sample.shape[2:]).permute(0, 2, 3, 1)
+    # print(f'sample.shape: {sample.shape}')
+    sample = rot2xyz(x=sample, mask=mask, pose_rep='xyz', glob=True, translation=True,
+                               jointstype='smpl', vertstrans=True, betas=None, beta=0, glob_rot=None,
+                               get_rotations_back=False)    
+    # print(f'sample.shape: {sample.shape}')
+
+    # Get text description
+    caption = desc[0]
+    name = mot_name[0]
+
+    # Create 3D motion representation
+    print("Creating 3D motion representation...")
+    motion = sample.squeeze(0).cpu().numpy().transpose(2,0,1)[:length]
+    # print(f'motion.shape: {motion.shape}')
+    skeleton = paramUtil.t2m_kinematic_chain
+    if log_dir is not None:
+        if step is not None:
+            save_path = log_dir_motion + '/' + f'{step:09}_{name}.mp4'
+        else:
+            save_path = log_dir_motion + '/' + name + '.mp4'
+    plot_3d_motion(save_path, skeleton, motion, dataset='humanml', title=caption, fps=20)
+
+        
+    
 
         
 def save_results(images, im_name, step, log_dir, temp, save_individually=False):
@@ -284,18 +348,3 @@ def load_stats(H, step):
     load_path = f"{H.load_dir}/saved_stats/stats_{step}"
     stats = torch.load(load_path)
     return stats
-
-
-# def set_up_visdom(H):
-#     server = H.visdom_server
-#     try:
-#         if server:
-#             vis = visdom.Visdom(server=server, port=H.visdom_port)
-#         else:
-#             vis = visdom.Visdom(port=H.visdom_port)
-#         return vis
-
-#     except Exception:
-#         log_str = "Failed to set up visdom server - aborting"
-#         log(log_str, level="error")
-#         raise RuntimeError(log_str)
